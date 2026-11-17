@@ -4,7 +4,6 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class InternalSystem extends Model
@@ -16,10 +15,8 @@ class InternalSystem extends Model
      */
     protected $fillable = [
         'name',
-        'code',
         'category',
         'description',
-        'default_lead_engineer_id',
         'is_active',
     ];
 
@@ -31,14 +28,6 @@ class InternalSystem extends Model
         return [
             'is_active' => 'boolean',
         ];
-    }
-
-    /**
-     * @return BelongsTo<User, $this>
-     */
-    public function defaultLeadEngineer(): BelongsTo
-    {
-        return $this->belongsTo(User::class, 'default_lead_engineer_id');
     }
 
     /**

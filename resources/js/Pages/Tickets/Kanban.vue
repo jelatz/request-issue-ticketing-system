@@ -3,6 +3,7 @@ import { computed, reactive, ref } from 'vue';
 import { Head, Link, router } from '@inertiajs/vue3';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import PriorityBadge from '../../Components/PriorityBadge.vue';
+import { useNewTicketModal } from '../../composables/useNewTicketModal';
 import { STATUS_LABELS, formatDate, isTicketOverdue } from '../../utils/formatters';
 
 const props = defineProps({
@@ -23,6 +24,8 @@ const props = defineProps({
         default: () => [],
     },
 });
+
+const { openNewTicketModal } = useNewTicketModal();
 
 const columnDefinitions = [
     { key: 'open', label: 'Open', dotClass: 'bg-slate-400', closedOrRejected: false },
@@ -205,12 +208,13 @@ function formatShortName(name) {
                     >
                         List view
                     </Link>
-                    <Link
-                        href="/tickets/create"
+                    <button
+                        type="button"
                         class="px-3.5 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                        @click="openNewTicketModal"
                     >
                         + New Ticket
-                    </Link>
+                    </button>
                 </div>
             </div>
 
@@ -239,7 +243,7 @@ function formatShortName(name) {
                     >
                         <option value="">All systems</option>
                         <option v-for="sys in systems" :key="sys.id" :value="String(sys.id)">
-                            {{ sys.code }} · {{ sys.name }}
+                            {{ sys.name }}
                         </option>
                     </select>
 
@@ -391,9 +395,9 @@ function formatShortName(name) {
                                         <span
                                             v-if="ticket.internal_system"
                                             :title="ticket.internal_system.name"
-                                            class="font-mono text-[11px] bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded truncate max-w-[110px]"
+                                            class="text-[11px] bg-slate-50 text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded truncate max-w-[110px]"
                                         >
-                                            {{ ticket.internal_system.code }}
+                                            {{ ticket.internal_system.name }}
                                         </span>
                                         <span
                                             v-if="ticket.subtasks_count > 0"

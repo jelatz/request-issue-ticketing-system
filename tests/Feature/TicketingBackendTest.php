@@ -13,6 +13,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Testing\AssertableInertia as Assert;
 use Tests\TestCase;
@@ -76,7 +77,7 @@ class TicketingBackendTest extends TestCase
         $this->assertGuest();
     }
 
-    public function test_user_can_submit_issue_with_auto_assigned_lead_and_engineering_request(): void
+    public function test_requester_can_submit_issue_and_engineering_request_with_attachments(): void
     {
         Storage::fake('public');
 
@@ -85,7 +86,7 @@ class TicketingBackendTest extends TestCase
             'is_active' => true,
         ]);
 
-        $leadEngineer = User::factory()->create([
+        $otherEngineer = User::factory()->create([
             'role' => User::ROLE_ENGINEER,
             'is_active' => true,
         ]);
@@ -98,9 +99,7 @@ class TicketingBackendTest extends TestCase
 
         $system = InternalSystem::create([
             'name' => 'Billing Portal',
-            'code' => 'BILLING',
             'category' => 'Core Revenue',
-            'default_lead_engineer_id' => $leadEngineer->id,
             'is_active' => true,
         ]);
 
@@ -112,9 +111,6 @@ class TicketingBackendTest extends TestCase
             'description' => 'PDF export throws 500 error for VAT-exempt customers.',
             'priority' => Ticket::PRIORITY_HIGH,
             'environment' => 'production',
-            'steps_to_reproduce' => '1. Open enterprise account. 2. Click Download PDF.',
-            'expected_behavior' => 'PDF downloads cleanly.',
-            'actual_behavior' => '500 Internal Server Error.',
             'impact_scope' => 'department',
             'attachments' => [
                 UploadedFile::fake()->create('error-trace.log', 12, 'text/plain'),
@@ -126,18 +122,21 @@ class TicketingBackendTest extends TestCase
 
         $year = now()->format('Y');
         $this->assertSame("ISS-{$year}-0001", $issue->ticket_number);
-        $this->assertSame($leadEngineer->id, $issue->lead_engineer_id);
+        $this->assertNull($issue->lead_engineer_id);
         $this->assertSame(Ticket::STATUS_OPEN, $issue->status);
+        $this->assertNull($issue->steps_to_reproduce);
+        $this->assertNull($issue->expected_behavior);
+        $this->assertNull($issue->actual_behavior);
         $this->assertCount(1, $issue->attachments);
         Storage::disk('public')->assertExists($issue->attachments->first()->file_path);
 
-        // Notifications sent to default lead engineer and superadmin (not requester)
-        $this->assertDatabaseHas('user_notifications', [
-            'user_id' => $leadEngineer->id,
-            'ticket_id' => $issue->id,
-        ]);
+        // Notifications sent to active superadmins only (not engineers or requester)
         $this->assertDatabaseHas('user_notifications', [
             'user_id' => $superadmin->id,
+            'ticket_id' => $issue->id,
+        ]);
+        $this->assertDatabaseMissing('user_notifications', [
+            'user_id' => $otherEngineer->id,
             'ticket_id' => $issue->id,
         ]);
         $this->assertDatabaseMissing('user_notifications', [
@@ -156,12 +155,17 @@ class TicketingBackendTest extends TestCase
             'proposed_functionality' => 'Scheduled background job pushing CSV to SFTP.',
             'expected_benefits' => 'Faster morning reconciliation.',
             'requested_deadline' => now()->addDays(14)->toDateString(),
+            'attachments' => [
+                UploadedFile::fake()->create('ledger-spec.pdf', 18, 'application/pdf'),
+            ],
         ]);
 
         $engRequest = Ticket::where('type', Ticket::TYPE_ENGINEERING_REQUEST)->firstOrFail();
         $requestResponse->assertRedirect(route('tickets.show', $engRequest));
         $this->assertSame("REQ-{$year}-0001", $engRequest->ticket_number);
         $this->assertNull($engRequest->lead_engineer_id);
+        $this->assertCount(1, $engRequest->attachments);
+        Storage::disk('public')->assertExists($engRequest->attachments->first()->file_path);
     }
 
     public function test_ticket_visibility_isolation_between_standard_users_and_staff(): void
@@ -404,8 +408,6 @@ class TicketingBackendTest extends TestCase
 
         $system = InternalSystem::create([
             'name' => 'NOC Telemetry',
-            'code' => 'NOC-MON',
-            'default_lead_engineer_id' => $engineer->id,
             'is_active' => true,
         ]);
 
@@ -450,5 +452,133 @@ class TicketingBackendTest extends TestCase
 
         $this->actingAs($requester)->patch(route('notifications.read', $notification))->assertRedirect();
         $this->assertTrue($notification->fresh()->is_read);
+    }
+
+    public function test_superadmin_can_create_and_update_internal_system_without_code_or_default_lead(): void
+    {
+        $superadmin = User::factory()->create([
+            'role' => User::ROLE_SUPERADMIN,
+            'is_active' => true,
+        ]);
+
+        // Create system with blank category falling back to 'Core Platform'
+        $createResponse = $this->actingAs($superadmin)->post(route('admin.systems.store'), [
+            'name' => 'Customer Provisioning',
+            'category' => '',
+            'description' => 'Handles customer onboarding and circuit activation.',
+            'is_active' => true,
+        ]);
+
+        $createResponse->assertRedirect();
+        $createResponse->assertSessionHasNoErrors();
+
+        $system = InternalSystem::where('name', 'Customer Provisioning')->firstOrFail();
+        $this->assertSame('Core Platform', $system->category);
+        $this->assertSame('Handles customer onboarding and circuit activation.', $system->description);
+        $this->assertTrue($system->is_active);
+
+        // Update system with explicit category and inactive flag
+        $updateResponse = $this->actingAs($superadmin)->put(route('admin.systems.update', $system), [
+            'name' => 'Customer Provisioning v2',
+            'category' => 'Operations',
+            'description' => 'Updated provisioning workflow.',
+            'is_active' => false,
+        ]);
+
+        $updateResponse->assertRedirect();
+        $updateResponse->assertSessionHasNoErrors();
+
+        $system->refresh();
+        $this->assertSame('Customer Provisioning v2', $system->name);
+        $this->assertSame('Operations', $system->category);
+        $this->assertSame('Updated provisioning workflow.', $system->description);
+        $this->assertFalse($system->is_active);
+
+        // Update system with blank category falling back cleanly to 'Core Platform'
+        $blankCategoryUpdate = $this->actingAs($superadmin)->put(route('admin.systems.update', $system), [
+            'name' => 'Customer Provisioning v2',
+            'category' => null,
+            'description' => null,
+            'is_active' => true,
+        ]);
+
+        $blankCategoryUpdate->assertRedirect();
+        $blankCategoryUpdate->assertSessionHasNoErrors();
+
+        $system->refresh();
+        $this->assertSame('Core Platform', $system->category);
+        $this->assertNull($system->description);
+        $this->assertTrue($system->is_active);
+    }
+
+    public function test_new_ticket_create_page_is_removed_and_internal_systems_are_shared(): void
+    {
+        $user = User::factory()->create([
+            'role' => User::ROLE_USER,
+            'is_active' => true,
+        ]);
+
+        InternalSystem::create([
+            'name' => 'Billing Portal',
+            'category' => 'Core Revenue',
+            'is_active' => true,
+        ]);
+
+        InternalSystem::create([
+            'name' => 'Audit Logger',
+            'category' => 'Compliance',
+            'is_active' => true,
+        ]);
+
+        InternalSystem::create([
+            'name' => 'Retired System',
+            'category' => 'Legacy',
+            'is_active' => false,
+        ]);
+
+        $this->assertFalse(Route::has('tickets.create'));
+
+        $this->actingAs($user)
+            ->get('/tickets/create')
+            ->assertNotFound();
+
+        $this->actingAs($user)
+            ->get(route('dashboard'))
+            ->assertOk()
+            ->assertInertia(fn (Assert $page) => $page
+                ->has('internalSystems', 2)
+                ->where('internalSystems.0.name', 'Audit Logger')
+                ->where('internalSystems.1.name', 'Billing Portal')
+            );
+    }
+
+    public function test_ticket_submission_requires_at_least_one_attachment(): void
+    {
+        $requester = User::factory()->create([
+            'role' => User::ROLE_USER,
+            'is_active' => true,
+        ]);
+
+        $this->actingAs($requester)->post(route('tickets.store'), [
+            'type' => Ticket::TYPE_ISSUE,
+            'title' => 'Missing attachment issue',
+            'description' => 'Should fail without attachments.',
+            'priority' => Ticket::PRIORITY_HIGH,
+            'environment' => 'production',
+            'impact_scope' => 'single_user',
+        ])->assertSessionHasErrors('attachments');
+
+        $this->actingAs($requester)->post(route('tickets.store'), [
+            'type' => Ticket::TYPE_ENGINEERING_REQUEST,
+            'title' => 'Missing attachment request',
+            'description' => 'Should fail without attachments.',
+            'priority' => Ticket::PRIORITY_MEDIUM,
+            'business_justification' => 'Needed for audit.',
+            'proposed_functionality' => 'Export endpoint.',
+            'expected_benefits' => 'Saves time.',
+            'attachments' => [],
+        ])->assertSessionHasErrors('attachments');
+
+        $this->assertDatabaseCount('tickets', 0);
     }
 }

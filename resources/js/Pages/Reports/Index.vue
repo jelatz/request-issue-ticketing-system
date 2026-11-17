@@ -253,7 +253,7 @@ function systemResolutionPercent(row) {
                             :key="system.id"
                             :value="String(system.id)"
                         >
-                            {{ system.code }} · {{ system.name }}
+                            {{ system.name }}
                         </option>
                     </select>
                 </div>
@@ -427,7 +427,6 @@ function systemResolutionPercent(row) {
                     <table class="min-w-full divide-y divide-slate-200 text-xs">
                         <thead class="bg-slate-50/80 text-xs font-medium text-slate-500">
                             <tr>
-                                <th class="px-4 py-2.5 text-left">System code</th>
                                 <th class="px-4 py-2.5 text-left">System name</th>
                                 <th class="px-4 py-2.5 text-right">Total tickets</th>
                                 <th class="px-4 py-2.5 text-right">Issues</th>
@@ -440,20 +439,15 @@ function systemResolutionPercent(row) {
                         </thead>
                         <tbody class="divide-y divide-slate-200 bg-white text-[13px]">
                             <tr v-if="by_system.length === 0">
-                                <td colspan="9" class="px-4 py-8 text-center text-xs text-slate-500">
+                                <td colspan="8" class="px-4 py-8 text-center text-xs text-slate-500">
                                     No system breakdown data matches the current filters.
                                 </td>
                             </tr>
                             <tr
                                 v-for="row in by_system"
-                                :key="`${row.system_code}-${row.system_name}`"
+                                :key="row.system_name"
                                 class="hover:bg-slate-50/70"
                             >
-                                <td class="px-4 py-2.5 whitespace-nowrap">
-                                    <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-700 border border-slate-200">
-                                        {{ row.system_code }}
-                                    </span>
-                                </td>
                                 <td class="px-4 py-2.5 font-medium text-slate-900">
                                     {{ row.system_name }}
                                 </td>

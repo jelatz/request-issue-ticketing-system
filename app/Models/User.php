@@ -105,16 +105,6 @@ class User extends Authenticatable
     }
 
     /**
-     * Internal systems where this user is the default lead engineer.
-     *
-     * @return HasMany<InternalSystem, $this>
-     */
-    public function defaultSystems(): HasMany
-    {
-        return $this->hasMany(InternalSystem::class, 'default_lead_engineer_id');
-    }
-
-    /**
      * Subtasks assigned to this engineer.
      *
      * @return HasMany<TicketSubtask, $this>

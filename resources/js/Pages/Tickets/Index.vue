@@ -6,6 +6,7 @@ import StatusBadge from '../../Components/StatusBadge.vue';
 import PriorityBadge from '../../Components/PriorityBadge.vue';
 import TypeBadge from '../../Components/TypeBadge.vue';
 import Pagination from '../../Components/Pagination.vue';
+import { useNewTicketModal } from '../../composables/useNewTicketModal';
 import { formatDate, isTicketOverdue } from '../../utils/formatters';
 
 const props = defineProps({
@@ -33,6 +34,7 @@ const props = defineProps({
 
 const page = usePage();
 const user = computed(() => page.props.auth?.user || null);
+const { openNewTicketModal } = useNewTicketModal();
 
 const filterForm = reactive({
     search: props.filters.search || '',
@@ -180,12 +182,13 @@ function collaboratorTooltip(ticket) {
                     >
                         Board View
                     </Link>
-                    <Link
-                        href="/tickets/create"
+                    <button
+                        type="button"
                         class="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                        @click="openNewTicketModal"
                     >
                         + New Ticket
-                    </Link>
+                    </button>
                 </div>
             </div>
 
@@ -272,7 +275,7 @@ function collaboratorTooltip(ticket) {
                         >
                             <option value="">All systems</option>
                             <option v-for="sys in systems" :key="sys.id" :value="String(sys.id)">
-                                {{ sys.code }} - {{ sys.name }}
+                                {{ sys.name }}
                             </option>
                         </select>
 
@@ -397,12 +400,7 @@ function collaboratorTooltip(ticket) {
                                         {{ ticket.title }}
                                     </Link>
                                     <div class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                                        <template v-if="ticket.internal_system">
-                                            <span class="font-mono text-[11px] text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
-                                                {{ ticket.internal_system.code }}
-                                            </span>
-                                            <span>{{ ticket.internal_system.name }}</span>
-                                        </template>
+                                        <span v-if="ticket.internal_system">{{ ticket.internal_system.name }}</span>
                                         <span v-else class="text-slate-400">General / New System</span>
                                         <span v-if="ticket.requester?.name" class="text-slate-400">
                                             · {{ ticket.requester.name }}

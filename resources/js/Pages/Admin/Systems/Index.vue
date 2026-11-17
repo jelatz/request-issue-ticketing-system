@@ -9,20 +9,14 @@ defineProps({
         type: Array,
         default: () => [],
     },
-    engineers: {
-        type: Array,
-        default: () => [],
-    },
 });
 
 // Create Modal
 const showCreateModal = ref(false);
 const createForm = useForm({
     name: '',
-    code: '',
     category: '',
     description: '',
-    default_lead_engineer_id: '',
     is_active: true,
 });
 
@@ -51,10 +45,8 @@ const showEditModal = ref(false);
 const editingSystem = ref(null);
 const editForm = useForm({
     name: '',
-    code: '',
     category: '',
     description: '',
-    default_lead_engineer_id: '',
     is_active: true,
 });
 
@@ -62,12 +54,8 @@ function openEditModal(system) {
     editingSystem.value = system;
     editForm.clearErrors();
     editForm.name = system.name || '';
-    editForm.code = system.code || '';
     editForm.category = system.category || '';
     editForm.description = system.description || '';
-    editForm.default_lead_engineer_id = system.default_lead_engineer_id
-        ? String(system.default_lead_engineer_id)
-        : '';
     editForm.is_active = Boolean(system.is_active);
     showEditModal.value = true;
 }
@@ -101,10 +89,8 @@ function toggleSystemActive(system) {
         `/admin/systems/${system.id}`,
         {
             name: system.name,
-            code: system.code,
             category: system.category || '',
             description: system.description || '',
-            default_lead_engineer_id: system.default_lead_engineer_id || null,
             is_active: !system.is_active,
         },
         {
@@ -129,7 +115,7 @@ function toggleSystemActive(system) {
                         Internal systems
                     </h1>
                     <p class="mt-0.5 text-xs text-slate-500">
-                        <span class="font-medium text-slate-700 tabular-nums">{{ systems.length }}</span> configured systems for ticket categorization and default lead routing.
+                        <span class="font-medium text-slate-700 tabular-nums">{{ systems.length }}</span> configured systems for ticket categorization.
                     </p>
                 </div>
 
@@ -151,9 +137,7 @@ function toggleSystemActive(system) {
                         <thead class="bg-slate-50/60 text-slate-500 font-medium border-b border-slate-200">
                             <tr>
                                 <th class="px-4 py-2.5 text-left font-medium">System</th>
-                                <th class="px-4 py-2.5 text-left font-medium">Code</th>
                                 <th class="px-4 py-2.5 text-left font-medium">Category</th>
-                                <th class="px-4 py-2.5 text-left font-medium">Default lead engineer</th>
                                 <th class="px-4 py-2.5 text-right font-medium">Tickets</th>
                                 <th class="px-4 py-2.5 text-left font-medium">Status</th>
                                 <th class="px-4 py-2.5 text-right font-medium">Actions</th>
@@ -161,7 +145,7 @@ function toggleSystemActive(system) {
                         </thead>
                         <tbody class="divide-y divide-slate-200 bg-white">
                             <tr v-if="systems.length === 0">
-                                <td colspan="7" class="px-4 py-12 text-center text-xs text-slate-500">
+                                <td colspan="5" class="px-4 py-12 text-center text-xs text-slate-500">
                                     No internal systems configured yet. Add an internal system to enable structured routing.
                                 </td>
                             </tr>
@@ -182,28 +166,8 @@ function toggleSystemActive(system) {
                                     </div>
                                 </td>
 
-                                <td class="px-4 py-3 whitespace-nowrap align-top">
-                                    <span class="font-mono text-xs font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                                        {{ system.code }}
-                                    </span>
-                                </td>
-
                                 <td class="px-4 py-3 whitespace-nowrap align-top text-slate-600">
                                     {{ system.category || 'Uncategorized' }}
-                                </td>
-
-                                <td class="px-4 py-3 whitespace-nowrap align-top">
-                                    <div v-if="system.default_lead_engineer">
-                                        <div class="font-medium text-slate-800">
-                                            {{ system.default_lead_engineer.name }}
-                                        </div>
-                                        <div class="font-mono text-xs text-slate-500">
-                                            @{{ system.default_lead_engineer.username }}
-                                        </div>
-                                    </div>
-                                    <span v-else class="text-xs text-slate-500">
-                                        Unassigned (Triage queue)
-                                    </span>
                                 </td>
 
                                 <td class="px-4 py-3 whitespace-nowrap text-right align-top font-medium text-slate-800 tabular-nums">
@@ -261,8 +225,8 @@ function toggleSystemActive(system) {
             @close="closeCreateModal"
         >
             <form class="space-y-4" @submit.prevent="submitCreate">
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div class="sm:col-span-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
                             System name
                         </label>
@@ -280,25 +244,6 @@ function toggleSystemActive(system) {
 
                     <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
-                            Short code
-                        </label>
-                        <input
-                            v-model="createForm.code"
-                            type="text"
-                            required
-                            maxlength="50"
-                            placeholder="e.g. CRM"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        />
-                        <p v-if="createForm.errors.code" class="mt-1 text-xs text-rose-600">
-                            {{ createForm.errors.code }}
-                        </p>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
                             Category
                         </label>
                         <input
@@ -309,28 +254,6 @@ function toggleSystemActive(system) {
                         />
                         <p v-if="createForm.errors.category" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.category }}
-                        </p>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
-                            Default lead engineer
-                        </label>
-                        <select
-                            v-model="createForm.default_lead_engineer_id"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        >
-                            <option value="">Unassigned (Triage queue)</option>
-                            <option
-                                v-for="engineer in engineers"
-                                :key="engineer.id"
-                                :value="String(engineer.id)"
-                            >
-                                {{ engineer.name }} (@{{ engineer.username }})
-                            </option>
-                        </select>
-                        <p v-if="createForm.errors.default_lead_engineer_id" class="mt-1 text-xs text-rose-600">
-                            {{ createForm.errors.default_lead_engineer_id }}
                         </p>
                     </div>
                 </div>
@@ -391,8 +314,8 @@ function toggleSystemActive(system) {
             @close="closeEditModal"
         >
             <form class="space-y-4" @submit.prevent="submitEdit">
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div class="sm:col-span-2">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
                             System name
                         </label>
@@ -409,24 +332,6 @@ function toggleSystemActive(system) {
 
                     <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
-                            Short code
-                        </label>
-                        <input
-                            v-model="editForm.code"
-                            type="text"
-                            required
-                            maxlength="50"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        />
-                        <p v-if="editForm.errors.code" class="mt-1 text-xs text-rose-600">
-                            {{ editForm.errors.code }}
-                        </p>
-                    </div>
-                </div>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
                             Category
                         </label>
                         <input
@@ -436,28 +341,6 @@ function toggleSystemActive(system) {
                         />
                         <p v-if="editForm.errors.category" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.category }}
-                        </p>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
-                            Default lead engineer
-                        </label>
-                        <select
-                            v-model="editForm.default_lead_engineer_id"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
-                        >
-                            <option value="">Unassigned (Triage queue)</option>
-                            <option
-                                v-for="engineer in engineers"
-                                :key="engineer.id"
-                                :value="String(engineer.id)"
-                            >
-                                {{ engineer.name }} (@{{ engineer.username }})
-                            </option>
-                        </select>
-                        <p v-if="editForm.errors.default_lead_engineer_id" class="mt-1 text-xs text-rose-600">
-                            {{ editForm.errors.default_lead_engineer_id }}
                         </p>
                     </div>
                 </div>

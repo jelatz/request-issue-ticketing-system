@@ -1,7 +1,9 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Link, router, usePage } from '@inertiajs/vue3';
+import NewTicketModal from '../Components/NewTicketModal.vue';
 import RoleBadge from '../Components/RoleBadge.vue';
+import { useNewTicketModal } from '../composables/useNewTicketModal';
 import { formatDateTime } from '../utils/formatters';
 
 defineProps({
@@ -12,6 +14,7 @@ defineProps({
 });
 
 const page = usePage();
+const { isNewTicketModalOpen, closeNewTicketModal } = useNewTicketModal();
 
 const user = computed(() => page.props.auth?.user || null);
 const unreadCount = computed(() => page.props.auth?.unread_notifications_count || 0);
@@ -62,14 +65,7 @@ const navigationItems = computed(() => {
             isActive:
                 currentPath.value === '/tickets' ||
                 (currentPath.value.startsWith('/tickets/') &&
-                    currentPath.value !== '/tickets/create' &&
                     currentPath.value !== '/tickets/kanban'),
-        },
-        {
-            label: 'New Ticket',
-            href: '/tickets/create',
-            group: 'Workspace',
-            isActive: currentPath.value === '/tickets/create',
         },
     ];
 
@@ -166,6 +162,10 @@ function handleOutsideClick(event) {
 }
 
 function handleGlobalKeydown(event) {
+    if (isNewTicketModalOpen.value) {
+        return;
+    }
+
     if (event.key === 'Escape') {
         notificationsOpen.value = false;
         mobileMenuOpen.value = false;
@@ -524,5 +524,7 @@ onUnmounted(() => {
                 <slot />
             </main>
         </div>
+
+        <NewTicketModal :show="isNewTicketModalOpen" @close="closeNewTicketModal" />
     </div>
 </template>

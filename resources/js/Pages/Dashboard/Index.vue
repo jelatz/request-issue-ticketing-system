@@ -5,6 +5,7 @@ import AppLayout from '../../Layouts/AppLayout.vue';
 import StatusBadge from '../../Components/StatusBadge.vue';
 import PriorityBadge from '../../Components/PriorityBadge.vue';
 import TypeBadge from '../../Components/TypeBadge.vue';
+import { useNewTicketModal } from '../../composables/useNewTicketModal';
 import { formatDate, formatDateTime, isTicketOverdue } from '../../utils/formatters';
 
 const props = defineProps({
@@ -28,6 +29,7 @@ const props = defineProps({
 
 const page = usePage();
 const user = computed(() => page.props.auth?.user || null);
+const { openNewTicketModal } = useNewTicketModal();
 
 const resolvedClosedCount = computed(
     () => (props.metrics.resolved_count || 0) + (props.metrics.closed_count || 0)
@@ -70,12 +72,13 @@ function visitTicket(ticketId) {
                     >
                         Board View
                     </Link>
-                    <Link
-                        href="/tickets/create"
+                    <button
+                        type="button"
                         class="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md transition-colors"
+                        @click="openNewTicketModal"
                     >
                         + New Ticket
-                    </Link>
+                    </button>
                 </div>
             </div>
 
@@ -356,12 +359,7 @@ function visitTicket(ticketId) {
                                     >
                                         {{ ticket.title }}
                                     </Link>
-                                    <div v-if="ticket.internal_system" class="text-xs text-slate-500 mt-0.5 truncate">
-                                        <span class="font-mono text-[11px] text-slate-600">
-                                            {{ ticket.internal_system.code }}
-                                        </span>
-                                        <span> · {{ ticket.internal_system.name }}</span>
-                                    </div>
+                                    <div v-if="ticket.internal_system" class="text-xs text-slate-500 mt-0.5 truncate">{{ ticket.internal_system.name }}</div>
                                 </td>
                                 <td class="px-4 py-2.5 whitespace-nowrap">
                                     <StatusBadge :status="ticket.status" />

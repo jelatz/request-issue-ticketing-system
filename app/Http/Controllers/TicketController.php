@@ -100,7 +100,7 @@ class TicketController extends Controller
             'systems' => InternalSystem::query()
                 ->where('is_active', true)
                 ->orderBy('name')
-                ->get(['id', 'name', 'code']),
+                ->get(['id', 'name']),
             'engineers' => $this->activeStaffList(),
             'statusCounts' => $statusCounts,
         ]);
@@ -144,19 +144,8 @@ class TicketController extends Controller
             'systems' => InternalSystem::query()
                 ->where('is_active', true)
                 ->orderBy('name')
-                ->get(['id', 'name', 'code']),
+                ->get(['id', 'name']),
             'engineers' => $this->activeStaffList(),
-        ]);
-    }
-
-    public function create(): Response
-    {
-        return Inertia::render('Tickets/Create', [
-            'internalSystems' => InternalSystem::query()
-                ->where('is_active', true)
-                ->with('defaultLeadEngineer:id,name')
-                ->orderBy('name')
-                ->get(),
         ]);
     }
 
@@ -173,16 +162,13 @@ class TicketController extends Controller
             'title' => ['required', 'string', 'max:255'],
             'description' => ['required', 'string'],
             'priority' => ['required', 'in:low,medium,high,critical'],
-            'attachments' => ['nullable', 'array'],
+            'attachments' => ['required', 'array', 'min:1'],
             'attachments.*' => ['file', 'max:10240'],
         ];
 
         if ($type === Ticket::TYPE_ISSUE) {
             $rules = array_merge($rules, [
                 'environment' => ['required', 'in:production,staging,internal_network,other'],
-                'steps_to_reproduce' => ['required', 'string'],
-                'expected_behavior' => ['nullable', 'string'],
-                'actual_behavior' => ['required', 'string'],
                 'impact_scope' => ['required', 'in:single_user,department,company_wide'],
             ]);
         } elseif ($type === Ticket::TYPE_ENGINEERING_REQUEST) {
@@ -197,32 +183,21 @@ class TicketController extends Controller
         $validated = $request->validate($rules);
         $user = $request->user();
 
-        $defaultLeadId = null;
-        if (!empty($validated['internal_system_id'])) {
-            $system = InternalSystem::find($validated['internal_system_id']);
-            if ($system?->default_lead_engineer_id) {
-                $defaultLeadId = User::query()
-                    ->whereKey($system->default_lead_engineer_id)
-                    ->where('is_active', true)
-                    ->value('id');
-            }
-        }
-
-        $ticket = DB::transaction(function () use ($validated, $user, $defaultLeadId, $ticketService, $request): Ticket {
+        $ticket = DB::transaction(function () use ($validated, $user, $ticketService, $request): Ticket {
             $ticket = Ticket::create([
                 'ticket_number' => $ticketService->generateTicketNumber($validated['type']),
                 'type' => $validated['type'],
                 'internal_system_id' => $validated['internal_system_id'] ?? null,
                 'requester_id' => $user->id,
-                'lead_engineer_id' => $defaultLeadId,
+                'lead_engineer_id' => null,
                 'title' => $validated['title'],
                 'description' => $validated['description'],
                 'priority' => $validated['priority'],
                 'status' => Ticket::STATUS_OPEN,
                 'environment' => $validated['environment'] ?? null,
-                'steps_to_reproduce' => $validated['steps_to_reproduce'] ?? null,
-                'expected_behavior' => $validated['expected_behavior'] ?? null,
-                'actual_behavior' => $validated['actual_behavior'] ?? null,
+                'steps_to_reproduce' => null,
+                'expected_behavior' => null,
+                'actual_behavior' => null,
                 'impact_scope' => $validated['impact_scope'] ?? null,
                 'business_justification' => $validated['business_justification'] ?? null,
                 'proposed_functionality' => $validated['proposed_functionality'] ?? null,
@@ -262,16 +237,8 @@ class TicketController extends Controller
             ->where('is_active', true)
             ->get();
 
-        $recipients = $superadmins;
-        if ($defaultLeadId) {
-            $defaultLead = User::find($defaultLeadId);
-            if ($defaultLead) {
-                $recipients = $recipients->push($defaultLead);
-            }
-        }
-
         $notificationService->notifyUsers(
-            $recipients,
+            $superadmins,
             $ticket,
             "New Ticket: {$ticket->ticket_number}",
             "{$user->name} submitted \"{$ticket->title}\".",

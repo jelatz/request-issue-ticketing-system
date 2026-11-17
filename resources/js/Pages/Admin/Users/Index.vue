@@ -332,7 +332,7 @@ function toggleUserStatus(userRow) {
                                 </td>
 
                                 <td class="px-4 py-3 align-top whitespace-nowrap">
-                                    <RoleBadge :role="userRow.role" />
+                                    <RoleBadge :role="userRow.role" :bordered="false" />
                                 </td>
 
                                 <td class="px-4 py-3 align-top">

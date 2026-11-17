@@ -1113,12 +1113,7 @@ const workflowPriorities = Object.keys(PRIORITY_LABELS);
                             <div class="flex items-start justify-between gap-3">
                                 <dt class="text-slate-500 shrink-0">System</dt>
                                 <dd class="text-right text-slate-800">
-                                    <span v-if="ticket.internal_system" class="inline-flex items-center gap-1.5 justify-end flex-wrap">
-                                        <span class="font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-700">
-                                            {{ ticket.internal_system.code }}
-                                        </span>
-                                        <span class="font-medium text-slate-900">{{ ticket.internal_system.name }}</span>
-                                    </span>
+                                    <span v-if="ticket.internal_system" class="font-medium text-slate-900">{{ ticket.internal_system.name }}</span>
                                     <span v-else class="text-slate-500">General / New system</span>
                                 </dd>
                             </div>

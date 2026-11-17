@@ -45,7 +45,7 @@ class ReportController extends Controller
             'by_engineer' => $reportData['by_engineer'],
             'by_department' => $reportData['by_department'],
             'filters' => $request->only(['date_from', 'date_to', 'type', 'internal_system_id']),
-            'systems' => InternalSystem::query()->orderBy('name')->get(['id', 'name', 'code']),
+            'systems' => InternalSystem::query()->orderBy('name')->get(['id', 'name']),
         ]);
     }
 
@@ -63,11 +63,10 @@ class ReportController extends Controller
             $handle = fopen('php://output', 'w');
 
             if ($section === 'systems') {
-                fputcsv($handle, ['System Name', 'System Code', 'Total', 'Issues', 'Engineering Requests', 'Active', 'Resolved/Closed', 'Critical']);
+                fputcsv($handle, ['System Name', 'Total', 'Issues', 'Engineering Requests', 'Active', 'Resolved/Closed', 'Critical']);
                 foreach ($reportData['by_system'] as $row) {
                     fputcsv($handle, [
                         $row['system_name'],
-                        $row['system_code'],
                         $row['total'],
                         $row['issues'],
                         $row['requests'],
@@ -225,12 +224,12 @@ class ReportController extends Controller
         $bySystem = [];
         foreach ($systems as $system) {
             $group = $tickets->where('internal_system_id', $system->id);
-            $bySystem[] = $this->formatSystemRow($system->name, $system->code, $group);
+            $bySystem[] = $this->formatSystemRow($system->name, $group);
         }
 
         $unassignedGroup = $tickets->whereNull('internal_system_id');
         if (!$systemId && $unassignedGroup->isNotEmpty()) {
-            $bySystem[] = $this->formatSystemRow('Unassigned / General', 'N/A', $unassignedGroup);
+            $bySystem[] = $this->formatSystemRow('Unassigned / General', $unassignedGroup);
         }
 
         $statuses = [
@@ -330,11 +329,10 @@ class ReportController extends Controller
      * @param Collection<int, Ticket> $group
      * @return array<string, mixed>
      */
-    private function formatSystemRow(string $name, string $code, Collection $group): array
+    private function formatSystemRow(string $name, Collection $group): array
     {
         return [
             'system_name' => $name,
-            'system_code' => $code,
             'total' => $group->count(),
             'issues' => $group->where('type', Ticket::TYPE_ISSUE)->count(),
             'requests' => $group->where('type', Ticket::TYPE_ENGINEERING_REQUEST)->count(),
