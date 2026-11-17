@@ -1,0 +1,178 @@
+<?php
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+
+class Ticket extends Model
+{
+    use HasFactory;
+
+    public const TYPE_ISSUE = 'issue';
+    public const TYPE_ENGINEERING_REQUEST = 'engineering_request';
+
+    public const PRIORITY_LOW = 'low';
+    public const PRIORITY_MEDIUM = 'medium';
+    public const PRIORITY_HIGH = 'high';
+    public const PRIORITY_CRITICAL = 'critical';
+
+    public const STATUS_OPEN = 'open';
+    public const STATUS_UNDER_REVIEW = 'under_review';
+    public const STATUS_IN_PROGRESS = 'in_progress';
+    public const STATUS_WAITING_ON_USER = 'waiting_on_user';
+    public const STATUS_RESOLVED = 'resolved';
+    public const STATUS_CLOSED = 'closed';
+    public const STATUS_REJECTED = 'rejected';
+    public const STATUS_CANCELLED = 'cancelled';
+
+    /**
+     * @var list<string>
+     */
+    protected $fillable = [
+        'ticket_number',
+        'type',
+        'internal_system_id',
+        'requester_id',
+        'lead_engineer_id',
+        'title',
+        'description',
+        'priority',
+        'status',
+        'environment',
+        'steps_to_reproduce',
+        'expected_behavior',
+        'actual_behavior',
+        'impact_scope',
+        'business_justification',
+        'proposed_functionality',
+        'expected_benefits',
+        'requested_deadline',
+        'review_decision_notes',
+        'target_due_date',
+        'first_responded_at',
+        'resolved_at',
+        'closed_at',
+        'resolution_summary',
+    ];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return [
+            'requested_deadline' => 'date',
+            'target_due_date' => 'date',
+            'first_responded_at' => 'datetime',
+            'resolved_at' => 'datetime',
+            'closed_at' => 'datetime',
+        ];
+    }
+
+    /**
+     * @return BelongsTo<InternalSystem, $this>
+     */
+    public function internalSystem(): BelongsTo
+    {
+        return $this->belongsTo(InternalSystem::class, 'internal_system_id');
+    }
+
+    /**
+     * @return BelongsTo<User, $this>
+     */
+    public function requester(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'requester_id');
+    }
+
+    /**
+     * @return BelongsTo<User, $this>
+     */
+    public function leadEngineer(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'lead_engineer_id');
+    }
+
+    /**
+     * @return BelongsToMany<User, $this>
+     */
+    public function collaborators(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'ticket_collaborators', 'ticket_id', 'user_id')
+            ->withPivot('added_by_id')
+            ->withTimestamps();
+    }
+
+    /**
+     * @return HasMany<TicketCollaborator, $this>
+     */
+    public function collaboratorEntries(): HasMany
+    {
+        return $this->hasMany(TicketCollaborator::class, 'ticket_id');
+    }
+
+    /**
+     * @return HasMany<TicketComment, $this>
+     */
+    public function comments(): HasMany
+    {
+        return $this->hasMany(TicketComment::class, 'ticket_id');
+    }
+
+    /**
+     * @return HasMany<TicketAttachment, $this>
+     */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(TicketAttachment::class, 'ticket_id');
+    }
+
+    /**
+     * @return HasMany<TicketSubtask, $this>
+     */
+    public function subtasks(): HasMany
+    {
+        return $this->hasMany(TicketSubtask::class, 'ticket_id');
+    }
+
+    /**
+     * @return HasMany<TicketActivity, $this>
+     */
+    public function activities(): HasMany
+    {
+        return $this->hasMany(TicketActivity::class, 'ticket_id');
+    }
+
+    /**
+     * @return HasMany<UserNotification, $this>
+     */
+    public function notifications(): HasMany
+    {
+        return $this->hasMany(UserNotification::class, 'ticket_id');
+    }
+
+    /**
+     * Scope tickets visible to the given user based on their role.
+     *
+     * @param Builder<Ticket> $query
+     * @return Builder<Ticket>
+     */
+    public function scopeVisibleTo(Builder $query, User $user): Builder
+    {
+        if ($user->isStaff()) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $subQuery) use ($user): void {
+            $subQuery->where('requester_id', $user->id)
+                ->orWhereHas('collaborators', function (Builder $collabQuery) use ($user): void {
+                    $collabQuery->where('users.id', $user->id);
+                });
+        });
+    }
+}
