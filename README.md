@@ -1,58 +1,69 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# CallTek Desk - Request & Issue Ticketing System
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+CallTek Desk (`request-ticketing-system`) is an internal engineering request and issue ticketing system built with Laravel, Inertia.js, Vue 3, and Tailwind CSS.
 
-## About Laravel
+## Tech Stack
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+- **Backend:** PHP `^8.3`, Laravel `^13.17`, `inertiajs/inertia-laravel` `^3.7`
+- **Frontend:** Vue `^3.5.45`, `@inertiajs/vue3` `^3.11.0`, Tailwind CSS `^4.0.0`, Vite `^8.0.0`
+- **Database:** SQLite (default local) or MySQL (configurable in `.env`)
+- **Testing:** PHPUnit `^12.5.12`
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Key Features
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+- **Authentication & Role-Based Access:** Login via username or email (`/login`) with active-account enforcement (`EnsureUserIsActive`) and three roles: `superadmin` (Superadmin), `engineer` (Engineer), and `user` (Requester).
+- **Full-Screen Ticket Submission Modal:** Accessible via `+ New Ticket` on the Dashboard, Tickets list, and Kanban board. Supports **Issue** (`ISS-YYYY-NNNN`) and **Engineering Request** (`REQ-YYYY-NNNN`) submissions with internal system selection, priority levels (`low`, `medium`, `high`, `critical`), Issue diagnostic fields (`environment`, `impact_scope`), Engineering Request scope fields (`business_justification`, `proposed_functionality`, `expected_benefits`, `requested_deadline`), and required file attachments (at least 1 file, max 10 MB each).
+- **Ticket Tracking & Collaboration:** Dashboard (`/dashboard`), filterable Tickets index (`/tickets`), staff Kanban board (`/tickets/kanban`), and ticket detail page (`/tickets/{ticket}`) featuring workflow status transitions, lead engineer and collaborator assignment, subtasks, public comments vs. staff-only internal notes and attachments, and activity history.
+- **Notifications:** In-app notification center (`/notifications`) and email notifications (`TicketNotificationMail`).
+- **Reports & CSV Exports:** Staff metrics overview (`/reports`) and CSV export (`/reports/export`) for `tickets`, `systems`, `engineers`, and `departments`.
+- **Administration (`superadmin` only):** User management (`/admin/users`) and internal system catalog (`/admin/systems`).
 
-## Learning Laravel
+## Local Setup
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+### Prerequisites
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+- PHP 8.3+
+- Composer
+- Node.js and npm
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+### Installation
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate --seed
+php artisan storage:link
+npm install
+npm run build
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+For local development with concurrent servers, run:
 
-## Contributing
+```bash
+composer run dev
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Seeded Demo Accounts
 
-## Code of Conduct
+All seeded accounts from `database/seeders/DatabaseSeeder.php` use the password `password`.
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+| Role | Username | Email | Department |
+| --- | --- | --- | --- |
+| Superadmin | `superadmin` | `superadmin@calltek.local` | IT Leadership |
+| Engineer | `engineer1` | `engineer1@calltek.local` | Platform Engineering |
+| Engineer | `engineer2` | `engineer2@calltek.local` | Network Engineering |
+| Engineer | `engineer3` | `engineer3@calltek.local` | Application Development |
+| Requester | `user1` | `user1@calltek.local` | Technical Support Operations |
+| Requester | `user2` | `user2@calltek.local` | Finance & Billing |
+| Requester | `user3` | `user3@calltek.local` | Network Operations Center |
 
-## Security Vulnerabilities
+## Testing & Build Commands
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```bash
+php artisan test
+# or
+composer test
 
-## License
-
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+npm run build
+```
