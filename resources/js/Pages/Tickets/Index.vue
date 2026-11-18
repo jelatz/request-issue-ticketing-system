@@ -280,7 +280,7 @@ function collaboratorTooltip(ticket) {
                         </select>
 
                         <select
-                            v-if="user?.is_staff"
+                            v-if="user?.is_super_admin"
                             id="filter-lead"
                             v-model="filterForm.lead_engineer_id"
                             aria-label="Filter by lead engineer"
@@ -302,10 +302,10 @@ function collaboratorTooltip(ticket) {
                             @change="applyFilters"
                         >
                             <option value="">All visible</option>
-                            <option value="unassigned">Unassigned</option>
+                            <option v-if="!user?.is_engineer" value="unassigned">Unassigned</option>
                             <option value="led_by_me">Led by me</option>
                             <option value="collaborating">Collaborating</option>
-                            <option value="my_submitted">Submitted by me</option>
+                            <option v-if="!user?.is_engineer" value="my_submitted">Submitted by me</option>
                             <option value="overdue">Overdue</option>
                         </select>
 

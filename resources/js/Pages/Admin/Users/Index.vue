@@ -5,6 +5,21 @@ import AppLayout from '../../../Layouts/AppLayout.vue';
 import RoleBadge from '../../../Components/RoleBadge.vue';
 import Pagination from '../../../Components/Pagination.vue';
 import Modal from '../../../Components/Modal.vue';
+import { useFeedback } from '../../../composables/useFeedback';
+
+const { notifyError } = useFeedback();
+
+function formatValidationErrorMessage(errors) {
+    const messages = Object.values(errors || {}).filter(
+        (v) => typeof v === 'string' && v.length > 0
+    );
+    if (messages.length === 0) {
+        return 'Submission failed. Please review the highlighted fields.';
+    }
+    return messages.length > 1
+        ? `Submission failed: ${messages[0]} (+${messages.length - 1} more)`
+        : `Submission failed: ${messages[0]}`;
+}
 
 const props = defineProps({
     users: {
@@ -116,11 +131,42 @@ function closeCreateModal() {
 }
 
 function submitCreate() {
+    createForm.clearErrors();
+
+    if (!String(createForm.name || '').trim()) {
+        createForm.setError('name', 'Please enter a full name.');
+    }
+    if (!String(createForm.username || '').trim()) {
+        createForm.setError('username', 'Please enter a username.');
+    }
+    if (!String(createForm.email || '').trim()) {
+        createForm.setError('email', 'Please enter an email address.');
+    }
+    if (!createForm.password) {
+        createForm.setError('password', 'Please enter an initial password.');
+    } else if (String(createForm.password).length < 6) {
+        createForm.setError('password', 'Password must be at least 6 characters.');
+    }
+    if (!createForm.role) {
+        createForm.setError('role', 'Please select a role.');
+    }
+
+    if (Object.keys(createForm.errors).length > 0) {
+        notifyError(formatValidationErrorMessage(createForm.errors));
+        return;
+    }
+
     createForm.post('/admin/users', {
         preserveScroll: true,
-        onSuccess: () => {
+        onSuccess: (responsePage) => {
+            if (responsePage?.props?.flash?.error) {
+                return;
+            }
             showCreateModal.value = false;
             createForm.reset();
+        },
+        onError: (errors) => {
+            notifyError(formatValidationErrorMessage(errors));
         },
     });
 }
@@ -167,12 +213,41 @@ function submitEdit() {
         return;
     }
 
+    editForm.clearErrors();
+
+    if (!String(editForm.name || '').trim()) {
+        editForm.setError('name', 'Please enter a full name.');
+    }
+    if (!String(editForm.username || '').trim()) {
+        editForm.setError('username', 'Please enter a username.');
+    }
+    if (!String(editForm.email || '').trim()) {
+        editForm.setError('email', 'Please enter an email address.');
+    }
+    if (editForm.password && String(editForm.password).length < 6) {
+        editForm.setError('password', 'Password must be at least 6 characters.');
+    }
+    if (!editForm.role) {
+        editForm.setError('role', 'Please select a role.');
+    }
+
+    if (Object.keys(editForm.errors).length > 0) {
+        notifyError(formatValidationErrorMessage(editForm.errors));
+        return;
+    }
+
     editForm.put(`/admin/users/${editingUser.value.id}`, {
         preserveScroll: true,
-        onSuccess: () => {
+        onSuccess: (responsePage) => {
+            if (responsePage?.props?.flash?.error) {
+                return;
+            }
             showEditModal.value = false;
             editingUser.value = null;
             editForm.reset();
+        },
+        onError: (errors) => {
+            notifyError(formatValidationErrorMessage(errors));
         },
     });
 }
@@ -410,7 +485,7 @@ function toggleUserStatus(userRow) {
             max-width="max-w-xl"
             @close="closeCreateModal"
         >
-            <form class="space-y-4" @submit.prevent="submitCreate">
+            <form novalidate class="space-y-4" @submit.prevent="submitCreate">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
@@ -420,7 +495,13 @@ function toggleUserStatus(userRow) {
                             v-model="createForm.name"
                             type="text"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.name
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('name')"
                         />
                         <p v-if="createForm.errors.name" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.name }}
@@ -435,7 +516,13 @@ function toggleUserStatus(userRow) {
                             v-model="createForm.username"
                             type="text"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.username
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('username')"
                         />
                         <p v-if="createForm.errors.username" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.username }}
@@ -452,7 +539,13 @@ function toggleUserStatus(userRow) {
                             v-model="createForm.email"
                             type="email"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.email
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('email')"
                         />
                         <p v-if="createForm.errors.email" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.email }}
@@ -468,7 +561,13 @@ function toggleUserStatus(userRow) {
                             type="password"
                             required
                             minlength="6"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.password
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('password')"
                         />
                         <p v-if="createForm.errors.password" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.password }}
@@ -484,7 +583,13 @@ function toggleUserStatus(userRow) {
                         <select
                             v-model="createForm.role"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.role
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @change="createForm.clearErrors('role')"
                         >
                             <option value="user">Requester / User</option>
                             <option value="engineer">Engineer</option>
@@ -502,7 +607,13 @@ function toggleUserStatus(userRow) {
                         <input
                             v-model="createForm.department"
                             type="text"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.department
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('department')"
                         />
                         <p v-if="createForm.errors.department" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.department }}
@@ -516,7 +627,13 @@ function toggleUserStatus(userRow) {
                         <input
                             v-model="createForm.job_title"
                             type="text"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.job_title
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('job_title')"
                         />
                         <p v-if="createForm.errors.job_title" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.job_title }}
@@ -564,7 +681,7 @@ function toggleUserStatus(userRow) {
             max-width="max-w-xl"
             @close="closeEditModal"
         >
-            <form class="space-y-4" @submit.prevent="submitEdit">
+            <form novalidate class="space-y-4" @submit.prevent="submitEdit">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
@@ -574,7 +691,13 @@ function toggleUserStatus(userRow) {
                             v-model="editForm.name"
                             type="text"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.name
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('name')"
                         />
                         <p v-if="editForm.errors.name" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.name }}
@@ -589,7 +712,13 @@ function toggleUserStatus(userRow) {
                             v-model="editForm.username"
                             type="text"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.username
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('username')"
                         />
                         <p v-if="editForm.errors.username" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.username }}
@@ -606,7 +735,13 @@ function toggleUserStatus(userRow) {
                             v-model="editForm.email"
                             type="email"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.email
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('email')"
                         />
                         <p v-if="editForm.errors.email" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.email }}
@@ -622,7 +757,13 @@ function toggleUserStatus(userRow) {
                             type="password"
                             minlength="6"
                             placeholder="Leave blank to keep current"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.password
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('password')"
                         />
                         <p v-if="editForm.errors.password" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.password }}
@@ -639,7 +780,13 @@ function toggleUserStatus(userRow) {
                             v-model="editForm.role"
                             required
                             :disabled="isEditingSelf"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:bg-slate-100 disabled:text-slate-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:ring-1 disabled:bg-slate-100 disabled:text-slate-500"
+                            :class="
+                                editForm.errors.role
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @change="editForm.clearErrors('role')"
                         >
                             <option value="user">Requester / User</option>
                             <option value="engineer">Engineer</option>
@@ -657,7 +804,13 @@ function toggleUserStatus(userRow) {
                         <input
                             v-model="editForm.department"
                             type="text"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.department
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('department')"
                         />
                         <p v-if="editForm.errors.department" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.department }}
@@ -671,7 +824,13 @@ function toggleUserStatus(userRow) {
                         <input
                             v-model="editForm.job_title"
                             type="text"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.job_title
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('job_title')"
                         />
                         <p v-if="editForm.errors.job_title" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.job_title }}

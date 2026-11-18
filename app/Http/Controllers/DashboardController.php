@@ -64,10 +64,14 @@ class DashboardController extends Controller
                                         $collabQuery->where('users.id', $user->id);
                                     });
                             });
-                    })->orWhere(function ($unassigned): void {
-                        $unassigned->where('status', Ticket::STATUS_OPEN)
-                            ->whereNull('lead_engineer_id');
                     });
+
+                    if ($user->isSuperAdmin()) {
+                        $query->orWhere(function ($unassigned): void {
+                            $unassigned->where('status', Ticket::STATUS_OPEN)
+                                ->whereNull('lead_engineer_id');
+                        });
+                    }
                 })
                 ->orderByRaw($priorityOrderSql)
                 ->orderBy('created_at')

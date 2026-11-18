@@ -150,7 +150,7 @@ class ReportController extends Controller
      */
     private function buildReportData(Request $request): array
     {
-        $query = Ticket::query()
+        $query = Ticket::visibleTo($request->user())
             ->with(['internalSystem', 'requester', 'leadEngineer', 'collaborators']);
 
         if ($dateFrom = $request->input('date_from')) {
@@ -270,7 +270,7 @@ class ReportController extends Controller
                 ->pluck('aggregate', 'assigned_engineer_id');
 
         $staffUsers = User::query()
-            ->whereIn('role', [User::ROLE_ENGINEER, User::ROLE_SUPERADMIN])
+            ->where('role', User::ROLE_ENGINEER)
             ->orderBy('name')
             ->get();
 

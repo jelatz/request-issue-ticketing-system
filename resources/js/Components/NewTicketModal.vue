@@ -1,6 +1,8 @@
 <script setup>
-import { computed, onMounted, onUnmounted, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useForm, usePage } from '@inertiajs/vue3';
+import { useFeedback } from '../composables/useFeedback';
+import { useNewTicketModal } from '../composables/useNewTicketModal';
 import { formatFileSize } from '../utils/formatters';
 
 const props = defineProps({
@@ -13,7 +15,10 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 
 const page = usePage();
+const { notifyError } = useFeedback();
+const { closeNewTicketModal } = useNewTicketModal();
 const internalSystems = computed(() => page.props.internalSystems || []);
+const scrollContainerRef = ref(null);
 
 const form = useForm({
     type: 'issue',
@@ -69,7 +74,20 @@ const extraAttachmentErrors = computed(() =>
         .map(([, message]) => message)
 );
 
+const hasFormErrors = computed(() => Object.keys(form.errors).length > 0);
+
+async function scrollToFirstError() {
+    await nextTick();
+    const firstErrorEl = scrollContainerRef.value?.querySelector('[data-error="true"]');
+    if (firstErrorEl) {
+        firstErrorEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } else {
+        scrollContainerRef.value?.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+}
+
 function close() {
+    closeNewTicketModal();
     emit('close');
 }
 
@@ -77,7 +95,12 @@ function handleFileChange(event) {
     const files = Array.from(event.target.files || []);
     if (files.length > 0) {
         form.attachments = [...form.attachments, ...files];
-        form.clearErrors('attachments');
+        const attachmentErrorKeys = Object.keys(form.errors).filter(
+            (key) => key === 'attachments' || key.startsWith('attachments.')
+        );
+        if (attachmentErrorKeys.length > 0) {
+            form.clearErrors(...attachmentErrorKeys);
+        }
     }
     event.target.value = '';
 }
@@ -98,17 +121,80 @@ function selectType(nextType) {
 }
 
 function submit() {
+    form.clearErrors();
+
+    if (!String(form.title || '').trim()) {
+        form.setError('title', 'Please enter a ticket summary / title.');
+    }
+    if (!String(form.description || '').trim()) {
+        form.setError('description', 'Please provide a description.');
+    }
+
+    if (form.type === 'issue') {
+        if (!form.environment) {
+            form.setError('environment', 'Please select an environment.');
+        }
+        if (!form.impact_scope) {
+            form.setError('impact_scope', 'Please select an impact scope.');
+        }
+    }
+
+    if (form.type === 'engineering_request') {
+        if (!String(form.business_justification || '').trim()) {
+            form.setError('business_justification', 'Please provide a business justification.');
+        }
+        if (!String(form.proposed_functionality || '').trim()) {
+            form.setError('proposed_functionality', 'Please describe the proposed functionality.');
+        }
+        if (!String(form.expected_benefits || '').trim()) {
+            form.setError('expected_benefits', 'Please describe the expected benefits.');
+        }
+    }
+
     if (form.attachments.length === 0) {
         form.setError('attachments', 'Please attach at least one file.');
+    }
+
+    if (Object.keys(form.errors).length > 0) {
+        const errorMessages = Object.values(form.errors).filter(Boolean);
+        notifyError(
+            errorMessages.length > 1
+                ? `Submission failed: ${errorMessages[0]} (+${errorMessages.length - 1} more)`
+                : `Submission failed: ${errorMessages[0]}`
+        );
+        scrollToFirstError();
         return;
     }
 
     form.post('/tickets', {
         forceFormData: true,
-        onSuccess: () => {
+        onSuccess: (responsePage) => {
+            const flashErr = responsePage?.props?.flash?.error;
+            if (flashErr) {
+                form.setError('submission', flashErr);
+                notifyError(flashErr);
+                scrollToFirstError();
+                return;
+            }
+
+            if (typeof document !== 'undefined') {
+                document.body.style.overflow = '';
+            }
             form.reset();
             form.clearErrors();
+            closeNewTicketModal();
             emit('close');
+        },
+        onError: (errors) => {
+            const errorMessages = Object.values(errors || form.errors || {}).filter(Boolean);
+            if (errorMessages.length > 0) {
+                notifyError(
+                    errorMessages.length > 1
+                        ? `Submission failed: ${errorMessages[0]} (+${errorMessages.length - 1} more)`
+                        : `Submission failed: ${errorMessages[0]}`
+                );
+            }
+            scrollToFirstError();
         },
     });
 }
@@ -177,10 +263,20 @@ onUnmounted(() => {
                 </button>
             </header>
 
-            <form class="flex-1 flex flex-col min-h-0" @submit.prevent="submit">
+            <form class="flex-1 flex flex-col min-h-0" novalidate @submit.prevent="submit">
                 <!-- Scrollable Body -->
-                <div class="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
+                <div ref="scrollContainerRef" class="flex-1 overflow-y-auto px-4 sm:px-6 lg:px-8 py-6">
                     <div class="max-w-4xl mx-auto">
+                        <div
+                            v-if="form.errors.submission"
+                            role="alert"
+                            data-error="true"
+                            class="mb-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-xs font-medium text-rose-900"
+                        >
+                            <span class="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                            <span>{{ form.errors.submission }}</span>
+                        </div>
+
                         <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-200 overflow-hidden">
                             <!-- 1. Type Segmented Control -->
                             <section class="p-5 space-y-2.5">
@@ -223,7 +319,7 @@ onUnmounted(() => {
                                 <p class="text-xs text-slate-500">
                                     {{ typeSubtitle }}
                                 </p>
-                                <p v-if="form.errors.type" class="text-xs text-rose-600">
+                                <p v-if="form.errors.type" data-error="true" class="text-xs text-rose-600">
                                     {{ form.errors.type }}
                                 </p>
                             </section>
@@ -241,7 +337,9 @@ onUnmounted(() => {
                                         <select
                                             id="new-ticket-internal-system"
                                             v-model="form.internal_system_id"
-                                            class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                            class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                            :class="form.errors.internal_system_id ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                            @change="form.clearErrors('internal_system_id')"
                                         >
                                             <option value="">- SELECT -</option>
                                             <option v-for="sys in internalSystems" :key="sys.id" :value="sys.id">
@@ -251,7 +349,7 @@ onUnmounted(() => {
                                         <p class="mt-1.5 text-xs text-slate-500">
                                             Submissions enter the engineering triage queue.
                                         </p>
-                                        <p v-if="form.errors.internal_system_id" class="mt-1 text-xs text-rose-600">
+                                        <p v-if="form.errors.internal_system_id" data-error="true" class="mt-1 text-xs text-rose-600">
                                             {{ form.errors.internal_system_id }}
                                         </p>
                                     </div>
@@ -266,7 +364,9 @@ onUnmounted(() => {
                                         <select
                                             id="new-ticket-priority"
                                             v-model="form.priority"
-                                            class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                            class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                            :class="form.errors.priority ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                            @change="form.clearErrors('priority')"
                                         >
                                             <option v-for="opt in priorityOptions" :key="opt.value" :value="opt.value">
                                                 {{ opt.label }}
@@ -275,7 +375,7 @@ onUnmounted(() => {
                                         <p class="mt-1.5 text-xs text-slate-500">
                                             {{ selectedPriority.description }}
                                         </p>
-                                        <p v-if="form.errors.priority" class="mt-1 text-xs text-rose-600">
+                                        <p v-if="form.errors.priority" data-error="true" class="mt-1 text-xs text-rose-600">
                                             {{ form.errors.priority }}
                                         </p>
                                     </div>
@@ -299,9 +399,11 @@ onUnmounted(() => {
                                                 ? 'e.g. Duplicate invoice batch generated during midnight cron failover'
                                                 : 'e.g. Automated GCash & Maya webhook reconciliation ledger export'
                                         "
-                                        class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                        class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                        :class="form.errors.title ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                        @input="form.clearErrors('title')"
                                     />
-                                    <p v-if="form.errors.title" class="mt-1 text-xs text-rose-600">
+                                    <p v-if="form.errors.title" data-error="true" class="mt-1 text-xs text-rose-600">
                                         {{ form.errors.title }}
                                     </p>
                                 </div>
@@ -319,9 +421,11 @@ onUnmounted(() => {
                                         rows="4"
                                         required
                                         placeholder="Summarize what is happening, affected modules, or the high-level scope..."
-                                        class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                        class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                        :class="form.errors.description ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                        @input="form.clearErrors('description')"
                                     />
-                                    <p v-if="form.errors.description" class="mt-1 text-xs text-rose-600">
+                                    <p v-if="form.errors.description" data-error="true" class="mt-1 text-xs text-rose-600">
                                         {{ form.errors.description }}
                                     </p>
                                 </div>
@@ -345,14 +449,16 @@ onUnmounted(() => {
                                             id="new-ticket-environment"
                                             v-model="form.environment"
                                             required
-                                            class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                            class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                            :class="form.errors.environment ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                            @change="form.clearErrors('environment')"
                                         >
                                             <option value="production">Production</option>
                                             <option value="staging">Staging</option>
                                             <option value="internal_network">Internal Network</option>
                                             <option value="other">Other</option>
                                         </select>
-                                        <p v-if="form.errors.environment" class="mt-1 text-xs text-rose-600">
+                                        <p v-if="form.errors.environment" data-error="true" class="mt-1 text-xs text-rose-600">
                                             {{ form.errors.environment }}
                                         </p>
                                     </div>
@@ -368,13 +474,15 @@ onUnmounted(() => {
                                             id="new-ticket-impact-scope"
                                             v-model="form.impact_scope"
                                             required
-                                            class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                            class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                            :class="form.errors.impact_scope ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                            @change="form.clearErrors('impact_scope')"
                                         >
                                             <option value="single_user">Single User</option>
                                             <option value="department">Department</option>
                                             <option value="company_wide">Company-Wide</option>
                                         </select>
-                                        <p v-if="form.errors.impact_scope" class="mt-1 text-xs text-rose-600">
+                                        <p v-if="form.errors.impact_scope" data-error="true" class="mt-1 text-xs text-rose-600">
                                             {{ form.errors.impact_scope }}
                                         </p>
                                     </div>
@@ -400,9 +508,11 @@ onUnmounted(() => {
                                         rows="3"
                                         required
                                         placeholder="Why is this enhancement or new system needed now?"
-                                        class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                        class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                        :class="form.errors.business_justification ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                        @input="form.clearErrors('business_justification')"
                                     />
-                                    <p v-if="form.errors.business_justification" class="mt-1 text-xs text-rose-600">
+                                    <p v-if="form.errors.business_justification" data-error="true" class="mt-1 text-xs text-rose-600">
                                         {{ form.errors.business_justification }}
                                     </p>
                                 </div>
@@ -420,9 +530,11 @@ onUnmounted(() => {
                                         rows="3"
                                         required
                                         placeholder="Describe the requested workflows, inputs, outputs, permissions, or integrations..."
-                                        class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                        class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                        :class="form.errors.proposed_functionality ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                        @input="form.clearErrors('proposed_functionality')"
                                     />
-                                    <p v-if="form.errors.proposed_functionality" class="mt-1 text-xs text-rose-600">
+                                    <p v-if="form.errors.proposed_functionality" data-error="true" class="mt-1 text-xs text-rose-600">
                                         {{ form.errors.proposed_functionality }}
                                     </p>
                                 </div>
@@ -441,9 +553,11 @@ onUnmounted(() => {
                                             rows="3"
                                             required
                                             placeholder="Time saved, error reduction, SLA improvement, or compliance gains..."
-                                            class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
+                                            class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                                            :class="form.errors.expected_benefits ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                            @input="form.clearErrors('expected_benefits')"
                                         />
-                                        <p v-if="form.errors.expected_benefits" class="mt-1 text-xs text-rose-600">
+                                        <p v-if="form.errors.expected_benefits" data-error="true" class="mt-1 text-xs text-rose-600">
                                             {{ form.errors.expected_benefits }}
                                         </p>
                                     </div>
@@ -459,12 +573,14 @@ onUnmounted(() => {
                                             id="new-ticket-requested-deadline"
                                             v-model="form.requested_deadline"
                                             type="date"
-                                            class="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500 tabular-nums"
+                                            class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none tabular-nums"
+                                            :class="form.errors.requested_deadline ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-blue-500'"
+                                            @input="form.clearErrors('requested_deadline')"
                                         />
                                         <p class="mt-1.5 text-xs text-slate-500">
                                             Optional target date for sprint planning.
                                         </p>
-                                        <p v-if="form.errors.requested_deadline" class="mt-1 text-xs text-rose-600">
+                                        <p v-if="form.errors.requested_deadline" data-error="true" class="mt-1 text-xs text-rose-600">
                                             {{ form.errors.requested_deadline }}
                                         </p>
                                     </div>
@@ -483,7 +599,10 @@ onUnmounted(() => {
                                         </p>
                                     </div>
 
-                                    <label class="self-start sm:self-auto inline-flex items-center px-3 py-1.5 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-md cursor-pointer transition-colors">
+                                    <label
+                                        class="self-start sm:self-auto inline-flex items-center px-3 py-1.5 text-xs font-medium bg-white hover:bg-slate-50 border rounded-md cursor-pointer transition-colors"
+                                        :class="form.errors.attachments || form.errors['attachments.0'] || extraAttachmentErrors.length > 0 ? 'border-rose-400 text-rose-700' : 'border-slate-200 text-slate-700'"
+                                    >
                                         <span>Select files</span>
                                         <input
                                             type="file"
@@ -520,21 +639,22 @@ onUnmounted(() => {
                                                 Remove
                                             </button>
                                         </div>
-                                        <p v-if="form.errors[`attachments.${index}`]" class="text-xs text-rose-600">
+                                        <p v-if="form.errors[`attachments.${index}`]" data-error="true" class="text-xs text-rose-600">
                                             {{ form.errors[`attachments.${index}`] }}
                                         </p>
                                     </div>
                                 </div>
 
-                                <p v-if="form.errors.attachments" class="text-xs text-rose-600">
+                                <p v-if="form.errors.attachments" data-error="true" class="text-xs text-rose-600">
                                     {{ form.errors.attachments }}
                                 </p>
-                                <p v-if="form.errors['attachments.0']" class="text-xs text-rose-600">
+                                <p v-if="form.errors['attachments.0']" data-error="true" class="text-xs text-rose-600">
                                     {{ form.errors['attachments.0'] }}
                                 </p>
                                 <p
                                     v-for="(errorMessage, errIdx) in extraAttachmentErrors"
                                     :key="`att-err-${errIdx}`"
+                                    data-error="true"
                                     class="text-xs text-rose-600"
                                 >
                                     {{ errorMessage }}
@@ -547,7 +667,16 @@ onUnmounted(() => {
                 <!-- Sticky Bottom Footer Bar -->
                 <footer class="shrink-0 bg-white border-t border-slate-200 px-4 sm:px-6 lg:px-8 py-3.5">
                     <div class="max-w-4xl mx-auto flex items-center justify-between gap-3">
-                        <span class="text-xs text-slate-500 hidden sm:inline">
+                        <span
+                            v-if="hasFormErrors"
+                            class="text-xs font-medium text-rose-600 hidden sm:inline"
+                        >
+                            Submission failed — please review the errors above.
+                        </span>
+                        <span
+                            v-else
+                            class="text-xs text-slate-500 hidden sm:inline"
+                        >
                             Submissions enter the engineering triage queue.
                         </span>
                         <div class="flex items-center gap-2.5 ml-auto">

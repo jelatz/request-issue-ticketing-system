@@ -1,11 +1,12 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Head, useForm, usePage } from '@inertiajs/vue3';
 import GuestLayout from '../../Layouts/GuestLayout.vue';
 
 const page = usePage();
 
 const flashError = computed(() => page.props.flash?.error || null);
+const dismissedError = ref(false);
 const showDemoAccounts = ref(false);
 
 const form = useForm({
@@ -13,6 +14,15 @@ const form = useForm({
     password: '',
     remember: false,
 });
+
+watch(
+    () => [page.props.flash?.id, flashError.value],
+    () => {
+        dismissedError.value = false;
+    }
+);
+
+const loginErrorSummary = computed(() => flashError.value || form.errors.login || form.errors.password || null);
 
 const demoAccounts = [
     {
@@ -65,13 +75,29 @@ function submit() {
 
     <GuestLayout title="Sign in to your workspace">
         <div
-            v-if="flashError"
-            class="mb-4 px-3 py-2 rounded-md bg-rose-50 border border-rose-200 text-xs font-medium text-rose-800"
+            v-if="(flashError && !dismissedError) || form.errors.login || form.errors.password"
+            class="mb-4 flex items-center justify-between gap-3 px-3 py-2 rounded-md bg-rose-50/80 border border-rose-200 text-xs font-medium text-rose-800"
         >
-            {{ flashError }}
+            <div class="flex items-center gap-2">
+                <span class="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
+                <span v-if="form.errors.login || form.errors.password">
+                    Sign in failed: {{ (flashError && dismissedError) ? (form.errors.login || form.errors.password) : loginErrorSummary }}
+                </span>
+                <span v-else>
+                    {{ flashError }}
+                </span>
+            </div>
+            <button
+                v-if="flashError && !form.errors.login && !form.errors.password"
+                type="button"
+                class="text-xs font-medium text-rose-700 hover:text-rose-950 shrink-0"
+                @click="dismissedError = true"
+            >
+                Dismiss
+            </button>
         </div>
 
-        <form class="space-y-4" @submit.prevent="submit">
+        <form class="space-y-4" novalidate @submit.prevent="submit">
             <div>
                 <label for="login" class="block text-xs font-medium text-slate-700 mb-1">
                     Username or Email

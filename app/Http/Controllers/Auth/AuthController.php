@@ -50,7 +50,7 @@ class AuthController extends Controller
 
         $request->session()->regenerate();
 
-        return redirect()->intended(route('dashboard'));
+        return redirect()->intended(route('dashboard'))->with('success', "Signed in as {$user->name}.");
     }
 
     public function logout(Request $request): RedirectResponse
@@ -60,6 +60,6 @@ class AuthController extends Controller
         $request->session()->invalidate();
         $request->session()->regenerateToken();
 
-        return redirect()->route('login');
+        return redirect()->route('login')->with('success', 'You have been signed out.');
     }
 }

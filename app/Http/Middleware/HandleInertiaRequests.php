@@ -67,6 +67,9 @@ class HandleInertiaRequests extends Middleware
                     : [],
             ],
             'flash' => [
+                'id' => fn () => ($request->session()->has('success') || $request->session()->has('error') || $request->session()->has('errors'))
+                    ? uniqid('flash_', true)
+                    : null,
                 'success' => fn () => $request->session()->get('success'),
                 'error' => fn () => $request->session()->get('error'),
             ],

@@ -3,6 +3,21 @@ import { ref } from 'vue';
 import { Head, router, useForm } from '@inertiajs/vue3';
 import AppLayout from '../../../Layouts/AppLayout.vue';
 import Modal from '../../../Components/Modal.vue';
+import { useFeedback } from '../../../composables/useFeedback';
+
+const { notifyError } = useFeedback();
+
+function formatValidationErrorMessage(errors) {
+    const messages = Object.values(errors || {}).filter(
+        (v) => typeof v === 'string' && v.length > 0
+    );
+    if (messages.length === 0) {
+        return 'Submission failed. Please review the highlighted fields.';
+    }
+    return messages.length > 1
+        ? `Submission failed: ${messages[0]} (+${messages.length - 1} more)`
+        : `Submission failed: ${messages[0]}`;
+}
 
 defineProps({
     systems: {
@@ -31,11 +46,28 @@ function closeCreateModal() {
 }
 
 function submitCreate() {
+    createForm.clearErrors();
+
+    if (!String(createForm.name || '').trim()) {
+        createForm.setError('name', 'Please enter a system name.');
+    }
+
+    if (Object.keys(createForm.errors).length > 0) {
+        notifyError(formatValidationErrorMessage(createForm.errors));
+        return;
+    }
+
     createForm.post('/admin/systems', {
         preserveScroll: true,
-        onSuccess: () => {
+        onSuccess: (responsePage) => {
+            if (responsePage?.props?.flash?.error) {
+                return;
+            }
             showCreateModal.value = false;
             createForm.reset();
+        },
+        onError: (errors) => {
+            notifyError(formatValidationErrorMessage(errors));
         },
     });
 }
@@ -70,12 +102,29 @@ function submitEdit() {
         return;
     }
 
+    editForm.clearErrors();
+
+    if (!String(editForm.name || '').trim()) {
+        editForm.setError('name', 'Please enter a system name.');
+    }
+
+    if (Object.keys(editForm.errors).length > 0) {
+        notifyError(formatValidationErrorMessage(editForm.errors));
+        return;
+    }
+
     editForm.put(`/admin/systems/${editingSystem.value.id}`, {
         preserveScroll: true,
-        onSuccess: () => {
+        onSuccess: (responsePage) => {
+            if (responsePage?.props?.flash?.error) {
+                return;
+            }
             showEditModal.value = false;
             editingSystem.value = null;
             editForm.reset();
+        },
+        onError: (errors) => {
+            notifyError(formatValidationErrorMessage(errors));
         },
     });
 }
@@ -224,7 +273,7 @@ function toggleSystemActive(system) {
             max-width="max-w-xl"
             @close="closeCreateModal"
         >
-            <form class="space-y-4" @submit.prevent="submitCreate">
+            <form novalidate class="space-y-4" @submit.prevent="submitCreate">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
@@ -235,7 +284,13 @@ function toggleSystemActive(system) {
                             type="text"
                             required
                             placeholder="e.g. CallTek Core CRM"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.name
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('name')"
                         />
                         <p v-if="createForm.errors.name" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.name }}
@@ -250,7 +305,13 @@ function toggleSystemActive(system) {
                             v-model="createForm.category"
                             type="text"
                             placeholder="e.g. Operations Platform"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                createForm.errors.category
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="createForm.clearErrors('category')"
                         />
                         <p v-if="createForm.errors.category" class="mt-1 text-xs text-rose-600">
                             {{ createForm.errors.category }}
@@ -266,7 +327,13 @@ function toggleSystemActive(system) {
                         v-model="createForm.description"
                         rows="3"
                         placeholder="Scope of this internal system, key workflows, and routing notes..."
-                        class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                        :class="
+                            createForm.errors.description
+                                ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                        "
+                        @input="createForm.clearErrors('description')"
                     />
                     <p v-if="createForm.errors.description" class="mt-1 text-xs text-rose-600">
                         {{ createForm.errors.description }}
@@ -313,7 +380,7 @@ function toggleSystemActive(system) {
             max-width="max-w-xl"
             @close="closeEditModal"
         >
-            <form class="space-y-4" @submit.prevent="submitEdit">
+            <form novalidate class="space-y-4" @submit.prevent="submitEdit">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                         <label class="block text-xs font-medium text-slate-700 mb-1">
@@ -323,7 +390,13 @@ function toggleSystemActive(system) {
                             v-model="editForm.name"
                             type="text"
                             required
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.name
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('name')"
                         />
                         <p v-if="editForm.errors.name" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.name }}
@@ -337,7 +410,13 @@ function toggleSystemActive(system) {
                         <input
                             v-model="editForm.category"
                             type="text"
-                            class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                            :class="
+                                editForm.errors.category
+                                    ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                    : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                            "
+                            @input="editForm.clearErrors('category')"
                         />
                         <p v-if="editForm.errors.category" class="mt-1 text-xs text-rose-600">
                             {{ editForm.errors.category }}
@@ -352,7 +431,13 @@ function toggleSystemActive(system) {
                     <textarea
                         v-model="editForm.description"
                         rows="3"
-                        class="w-full rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                        class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
+                        :class="
+                            editForm.errors.description
+                                ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
+                                : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
+                        "
+                        @input="editForm.clearErrors('description')"
                     />
                     <p v-if="editForm.errors.description" class="mt-1 text-xs text-rose-600">
                         {{ editForm.errors.description }}

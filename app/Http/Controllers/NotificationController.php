@@ -42,7 +42,7 @@ class NotificationController extends Controller
             return redirect($notification->action_url);
         }
 
-        return back();
+        return back()->with('success', 'Notification marked as read.');
     }
 
     public function markAllRead(Request $request): RedirectResponse

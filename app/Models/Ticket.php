@@ -157,6 +157,30 @@ class Ticket extends Model
     }
 
     /**
+     * Determine whether the given user is assigned as lead or collaborator on this ticket.
+     */
+    public function isAssignedTo(User $user): bool
+    {
+        if ((int) $this->lead_engineer_id === (int) $user->id) {
+            return true;
+        }
+
+        if ($this->relationLoaded('collaborators')) {
+            return $this->collaborators->contains('id', $user->id);
+        }
+
+        return $this->collaborators()->where('users.id', $user->id)->exists();
+    }
+
+    /**
+     * Determine whether the given staff user can work on this ticket.
+     */
+    public function canBeWorkedOnBy(User $user): bool
+    {
+        return $user->isSuperAdmin() || ($user->isEngineer() && $this->isAssignedTo($user));
+    }
+
+    /**
      * Scope tickets visible to the given user based on their role.
      *
      * @param Builder<Ticket> $query
@@ -164,12 +188,14 @@ class Ticket extends Model
      */
     public function scopeVisibleTo(Builder $query, User $user): Builder
     {
-        if ($user->isStaff()) {
+        if ($user->isSuperAdmin()) {
             return $query;
         }
 
-        return $query->where(function (Builder $subQuery) use ($user): void {
-            $subQuery->where('requester_id', $user->id)
+        $directColumn = $user->isEngineer() ? 'lead_engineer_id' : 'requester_id';
+
+        return $query->where(function (Builder $subQuery) use ($user, $directColumn): void {
+            $subQuery->where($directColumn, $user->id)
                 ->orWhereHas('collaborators', function (Builder $collabQuery) use ($user): void {
                     $collabQuery->where('users.id', $user->id);
                 });

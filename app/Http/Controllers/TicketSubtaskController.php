@@ -4,9 +4,11 @@ namespace App\Http\Controllers;
 
 use App\Models\Ticket;
 use App\Models\TicketSubtask;
+use App\Models\User;
 use App\Services\TicketService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class TicketSubtaskController extends Controller
 {
@@ -15,12 +17,18 @@ class TicketSubtaskController extends Controller
         Ticket $ticket,
         TicketService $ticketService
     ): RedirectResponse {
+        $user = $request->user();
+        $this->authorizeSubtaskAccess($ticket, $user);
+
         $validated = $request->validate([
             'title' => ['required', 'string', 'max:255'],
-            'assigned_engineer_id' => ['nullable', 'exists:users,id'],
+            'assigned_engineer_id' => [
+                'nullable',
+                Rule::exists('users', 'id')->where(
+                    fn ($query) => $query->where('is_active', true)->where('role', User::ROLE_ENGINEER)
+                ),
+            ],
         ]);
-
-        $user = $request->user();
 
         $subtask = TicketSubtask::create([
             'ticket_id' => $ticket->id,
@@ -49,11 +57,13 @@ class TicketSubtaskController extends Controller
         TicketSubtask $subtask,
         TicketService $ticketService
     ): RedirectResponse {
+        $user = $request->user();
+        $this->authorizeSubtaskAccess($ticket, $user);
+
         if ($subtask->ticket_id !== $ticket->id) {
             abort(404);
         }
 
-        $user = $request->user();
         $nextCompleted = !$subtask->is_completed;
 
         $subtask->update([
@@ -80,6 +90,9 @@ class TicketSubtaskController extends Controller
         TicketSubtask $subtask,
         TicketService $ticketService
     ): RedirectResponse {
+        $user = $request->user();
+        $this->authorizeSubtaskAccess($ticket, $user);
+
         if ($subtask->ticket_id !== $ticket->id) {
             abort(404);
         }
@@ -89,7 +102,7 @@ class TicketSubtaskController extends Controller
 
         $ticketService->recordActivity(
             $ticket,
-            $request->user(),
+            $user,
             'subtask_removed',
             "Removed subtask: {$title}",
             $title,
@@ -97,5 +110,14 @@ class TicketSubtaskController extends Controller
         );
 
         return back()->with('success', 'Subtask removed.');
+    }
+
+    private function authorizeSubtaskAccess(Ticket $ticket, User $user): void
+    {
+        abort_unless(
+            $ticket->canBeWorkedOnBy($user),
+            403,
+            'You do not have permission to manage subtasks on this ticket.'
+        );
     }
 }

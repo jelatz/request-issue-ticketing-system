@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Link, router, usePage } from '@inertiajs/vue3';
 import NewTicketModal from '../Components/NewTicketModal.vue';
 import RoleBadge from '../Components/RoleBadge.vue';
+import { useFeedback } from '../composables/useFeedback';
 import { useNewTicketModal } from '../composables/useNewTicketModal';
 import { formatDateTime } from '../utils/formatters';
 
@@ -15,28 +16,55 @@ defineProps({
 
 const page = usePage();
 const { isNewTicketModalOpen, closeNewTicketModal } = useNewTicketModal();
+const { toasts, notifySuccess, notifyError, dismissToast, markFlashProcessed } = useFeedback();
 
 const user = computed(() => page.props.auth?.user || null);
 const unreadCount = computed(() => page.props.auth?.unread_notifications_count || 0);
 const recentNotifications = computed(() => page.props.auth?.recent_notifications || []);
 const flashSuccess = computed(() => page.props.flash?.success || null);
 const flashError = computed(() => page.props.flash?.error || null);
+const pageErrors = computed(() => page.props.errors || {});
+const validationErrorList = computed(() =>
+    Object.values(pageErrors.value).filter((v) => typeof v === 'string' && v.length > 0)
+);
+const firstValidationError = computed(() => validationErrorList.value[0] || null);
+const validationErrorCount = computed(() => validationErrorList.value.length);
 
 const notificationsOpen = ref(false);
 const mobileMenuOpen = ref(false);
-const dismissedSuccess = ref(false);
-const dismissedError = ref(false);
 const notificationDropdownRef = ref(null);
 const searchInputRef = ref(null);
 const searchQuery = ref(page.props.filters?.search || '');
 
-watch(flashSuccess, () => {
-    dismissedSuccess.value = false;
-});
+let removeHttpExceptionListener = null;
+let removeNetworkErrorListener = null;
 
-watch(flashError, () => {
-    dismissedError.value = false;
-});
+watch(
+    () => [
+        page.props.flash?.id,
+        page.props.flash?.success,
+        page.props.flash?.error,
+        page.props.errors,
+    ],
+    () => {
+        const flashId = page.props.flash?.id || null;
+        if (!flashId || markFlashProcessed(flashId)) {
+            if (flashSuccess.value) {
+                notifySuccess(flashSuccess.value);
+            }
+            if (flashError.value) {
+                notifyError(flashError.value);
+            } else if (firstValidationError.value) {
+                notifyError(
+                    validationErrorCount.value > 1
+                        ? `Submission failed: ${firstValidationError.value} (+${validationErrorCount.value - 1} more)`
+                        : `Submission failed: ${firstValidationError.value}`
+                );
+            }
+        }
+    },
+    { immediate: true, deep: true }
+);
 
 watch(
     () => page.props.filters?.search,
@@ -196,11 +224,34 @@ function handleGlobalKeydown(event) {
 onMounted(() => {
     document.addEventListener('click', handleOutsideClick);
     window.addEventListener('keydown', handleGlobalKeydown);
+
+    removeHttpExceptionListener = router.on('httpException', (event) => {
+        event.preventDefault();
+        const status = event.detail?.response?.status;
+        if (status === 403) {
+            notifyError('You do not have permission to perform this action.');
+        } else if (status === 419) {
+            notifyError('Your session expired. Please refresh the page and try again.');
+        } else if (status === 413) {
+            notifyError('The uploaded files exceed the maximum allowed size.');
+        } else {
+            notifyError(
+                `The server returned an unexpected error response${status ? ` (HTTP ${status})` : ''}. Please try again.`
+            );
+        }
+    });
+
+    removeNetworkErrorListener = router.on('networkError', (event) => {
+        event.preventDefault();
+        notifyError('Network or server error occurred while submitting. Please try again.');
+    });
 });
 
 onUnmounted(() => {
     document.removeEventListener('click', handleOutsideClick);
     window.removeEventListener('keydown', handleGlobalKeydown);
+    removeHttpExceptionListener?.();
+    removeNetworkErrorListener?.();
 });
 </script>
 
@@ -481,50 +532,54 @@ onUnmounted(() => {
 
             <!-- Page Content -->
             <main class="flex-1 px-4 sm:px-6 lg:px-8 py-6">
-                <!-- Flash Banners -->
-                <div
-                    v-if="(flashSuccess && !dismissedSuccess) || (flashError && !dismissedError)"
-                    class="mb-5 space-y-2"
-                >
-                    <div
-                        v-if="flashSuccess && !dismissedSuccess"
-                        class="flex items-center justify-between gap-4 px-3.5 py-2.5 rounded-md bg-emerald-50/80 border border-emerald-200 text-emerald-900 text-xs"
-                    >
-                        <div class="flex items-center gap-2">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                            <span>{{ flashSuccess }}</span>
-                        </div>
-                        <button
-                            type="button"
-                            class="text-xs font-medium text-emerald-700 hover:text-emerald-950 shrink-0"
-                            @click="dismissedSuccess = true"
-                        >
-                            Dismiss
-                        </button>
-                    </div>
-
-                    <div
-                        v-if="flashError && !dismissedError"
-                        class="flex items-center justify-between gap-4 px-3.5 py-2.5 rounded-md bg-rose-50/80 border border-rose-200 text-rose-900 text-xs"
-                    >
-                        <div class="flex items-center gap-2">
-                            <span class="w-1.5 h-1.5 rounded-full bg-rose-500 shrink-0" />
-                            <span>{{ flashError }}</span>
-                        </div>
-                        <button
-                            type="button"
-                            class="text-xs font-medium text-rose-700 hover:text-rose-950 shrink-0"
-                            @click="dismissedError = true"
-                        >
-                            Dismiss
-                        </button>
-                    </div>
-                </div>
-
                 <slot />
             </main>
         </div>
 
         <NewTicketModal :show="isNewTicketModalOpen" @close="closeNewTicketModal" />
+
+        <Teleport to="body">
+            <div
+                aria-live="polite"
+                class="fixed top-4 right-4 z-[70] flex flex-col gap-2 w-full max-w-sm pointer-events-none px-4 sm:px-0"
+            >
+                <div
+                    v-for="toast in toasts"
+                    :key="toast.id"
+                    role="status"
+                    class="pointer-events-auto rounded-lg border px-3.5 py-3 shadow-lg text-xs flex items-start justify-between gap-3"
+                    :class="
+                        toast.type === 'success'
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                            : 'border-rose-200 bg-rose-50 text-rose-950'
+                    "
+                >
+                    <div class="flex items-start gap-2.5 min-w-0">
+                        <span
+                            class="w-2 h-2 rounded-full mt-1 shrink-0"
+                            :class="toast.type === 'success' ? 'bg-emerald-500' : 'bg-rose-500'"
+                        />
+                        <div class="min-w-0 leading-relaxed">
+                            <span class="font-semibold mr-1">
+                                {{ toast.type === 'success' ? 'Success' : 'Failed' }}:
+                            </span>
+                            <span class="break-words">{{ toast.message }}</span>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        class="text-xs font-medium shrink-0"
+                        :class="
+                            toast.type === 'success'
+                                ? 'text-emerald-700 hover:text-emerald-950'
+                                : 'text-rose-700 hover:text-rose-950'
+                        "
+                        @click="dismissToast(toast.id)"
+                    >
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+        </Teleport>
     </div>
 </template>

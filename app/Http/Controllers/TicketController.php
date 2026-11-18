@@ -131,6 +131,11 @@ class TicketController extends Controller
             $columns[$status] = $tickets->where('status', $status)->values()->all();
         }
 
+        $selectedTicketId = $request->integer('ticket');
+        $selectedTicket = $selectedTicketId > 0
+            ? Ticket::visibleTo($user)->find($selectedTicketId)
+            : null;
+
         return Inertia::render('Tickets/Kanban', [
             'columns' => $columns,
             'filters' => $request->only([
@@ -146,6 +151,12 @@ class TicketController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name']),
             'engineers' => $this->activeStaffList(),
+            'selectedTicket' => $selectedTicket
+                ? $this->loadTicketDetails($selectedTicket, $user->isStaff())
+                : null,
+            'selectedTicketPermissions' => $selectedTicket
+                ? $this->buildTicketPermissions($selectedTicket, $user)
+                : null,
         ]);
     }
 
@@ -183,72 +194,84 @@ class TicketController extends Controller
         $validated = $request->validate($rules);
         $user = $request->user();
 
-        $ticket = DB::transaction(function () use ($validated, $user, $ticketService, $request): Ticket {
-            $ticket = Ticket::create([
-                'ticket_number' => $ticketService->generateTicketNumber($validated['type']),
-                'type' => $validated['type'],
-                'internal_system_id' => $validated['internal_system_id'] ?? null,
-                'requester_id' => $user->id,
-                'lead_engineer_id' => null,
-                'title' => $validated['title'],
-                'description' => $validated['description'],
-                'priority' => $validated['priority'],
-                'status' => Ticket::STATUS_OPEN,
-                'environment' => $validated['environment'] ?? null,
-                'steps_to_reproduce' => null,
-                'expected_behavior' => null,
-                'actual_behavior' => null,
-                'impact_scope' => $validated['impact_scope'] ?? null,
-                'business_justification' => $validated['business_justification'] ?? null,
-                'proposed_functionality' => $validated['proposed_functionality'] ?? null,
-                'expected_benefits' => $validated['expected_benefits'] ?? null,
-                'requested_deadline' => $validated['requested_deadline'] ?? null,
-            ]);
-
-            foreach ($request->file('attachments', []) as $file) {
-                $storedPath = $file->store("tickets/{$ticket->id}", 'public');
-
-                TicketAttachment::create([
-                    'ticket_id' => $ticket->id,
-                    'ticket_comment_id' => null,
-                    'uploaded_by_id' => $user->id,
-                    'original_name' => $file->getClientOriginalName(),
-                    'file_path' => $storedPath,
-                    'mime_type' => $file->getClientMimeType(),
-                    'file_size' => $file->getSize() ?? 0,
-                    'is_internal' => false,
+        try {
+            $ticket = DB::transaction(function () use ($validated, $user, $ticketService, $request): Ticket {
+                $ticket = Ticket::create([
+                    'ticket_number' => $ticketService->generateTicketNumber($validated['type']),
+                    'type' => $validated['type'],
+                    'internal_system_id' => $validated['internal_system_id'] ?? null,
+                    'requester_id' => $user->id,
+                    'lead_engineer_id' => null,
+                    'title' => $validated['title'],
+                    'description' => $validated['description'],
+                    'priority' => $validated['priority'],
+                    'status' => Ticket::STATUS_OPEN,
+                    'environment' => $validated['environment'] ?? null,
+                    'steps_to_reproduce' => null,
+                    'expected_behavior' => null,
+                    'actual_behavior' => null,
+                    'impact_scope' => $validated['impact_scope'] ?? null,
+                    'business_justification' => $validated['business_justification'] ?? null,
+                    'proposed_functionality' => $validated['proposed_functionality'] ?? null,
+                    'expected_benefits' => $validated['expected_benefits'] ?? null,
+                    'requested_deadline' => $validated['requested_deadline'] ?? null,
                 ]);
-            }
 
-            $ticketService->recordActivity(
+                foreach ($request->file('attachments', []) as $file) {
+                    $storedPath = $file->store("tickets/{$ticket->id}", 'public');
+
+                    TicketAttachment::create([
+                        'ticket_id' => $ticket->id,
+                        'ticket_comment_id' => null,
+                        'uploaded_by_id' => $user->id,
+                        'original_name' => $file->getClientOriginalName(),
+                        'file_path' => $storedPath,
+                        'mime_type' => $file->getClientMimeType(),
+                        'file_size' => $file->getSize() ?? 0,
+                        'is_internal' => false,
+                    ]);
+                }
+
+                $ticketService->recordActivity(
+                    $ticket,
+                    $user,
+                    'ticket_created',
+                    "Ticket {$ticket->ticket_number} submitted by {$user->name}.",
+                    null,
+                    Ticket::STATUS_OPEN
+                );
+
+                return $ticket;
+            });
+
+            $superadmins = User::query()
+                ->where('role', User::ROLE_SUPERADMIN)
+                ->where('is_active', true)
+                ->get();
+
+            $notificationService->notifyUsers(
+                $superadmins,
                 $ticket,
-                $user,
-                'ticket_created',
-                "Ticket {$ticket->ticket_number} submitted by {$user->name}.",
-                null,
-                Ticket::STATUS_OPEN
+                "New Ticket: {$ticket->ticket_number}",
+                "{$user->name} submitted \"{$ticket->title}\".",
+                route('tickets.show', $ticket, false),
+                $user->id
             );
 
-            return $ticket;
-        });
+            $redirectRoute = Ticket::visibleTo($user)->whereKey($ticket->id)->exists()
+                ? route('tickets.show', $ticket)
+                : route('tickets.index');
 
-        $superadmins = User::query()
-            ->where('role', User::ROLE_SUPERADMIN)
-            ->where('is_active', true)
-            ->get();
+            return redirect()
+                ->to($redirectRoute)
+                ->with('success', "Ticket {$ticket->ticket_number} created successfully.");
+        } catch (\Throwable $e) {
+            report($e);
 
-        $notificationService->notifyUsers(
-            $superadmins,
-            $ticket,
-            "New Ticket: {$ticket->ticket_number}",
-            "{$user->name} submitted \"{$ticket->title}\".",
-            route('tickets.show', $ticket, false),
-            $user->id
-        );
-
-        return redirect()
-            ->route('tickets.show', $ticket)
-            ->with('success', "Ticket {$ticket->ticket_number} created successfully.");
+            return back()
+                ->withInput()
+                ->with('error', 'Failed to submit ticket. Please try again.');
+        }
     }
 
     public function show(Request $request, Ticket $ticket): Response
@@ -259,59 +282,10 @@ class TicketController extends Controller
             abort(403, 'You do not have permission to view this ticket.');
         }
 
-        $isStaff = $user->isStaff();
-
-        $ticket->load([
-            'internalSystem',
-            'requester',
-            'leadEngineer',
-            'collaborators',
-            'subtasks' => fn ($query) => $query->orderBy('id')->with('assignedEngineer'),
-            'activities' => fn ($query) => $query->orderByDesc('created_at')->orderByDesc('id')->with('user'),
-            'comments' => function ($query) use ($isStaff): void {
-                if (!$isStaff) {
-                    $query->where('is_internal', false);
-                }
-
-                $query->orderBy('created_at')->orderBy('id')->with([
-                    'user',
-                    'attachments' => function ($attachmentQuery) use ($isStaff): void {
-                        if (!$isStaff) {
-                            $attachmentQuery->where('is_internal', false);
-                        }
-                    },
-                ]);
-            },
-            'attachments' => function ($query) use ($isStaff): void {
-                if (!$isStaff) {
-                    $query->where('is_internal', false);
-                }
-
-                $query->orderBy('created_at')->orderBy('id')->with('uploadedBy');
-            },
-        ]);
-
         return Inertia::render('Tickets/Show', [
-            'ticket' => $ticket,
+            'ticket' => $this->loadTicketDetails($ticket, $user->isStaff()),
             'engineers' => $this->activeStaffList(),
-            'permissions' => [
-                'can_manage_workflow' => $isStaff,
-                'can_assign' => $isStaff,
-                'can_post_internal_note' => $isStaff,
-                'can_manage_subtasks' => $isStaff,
-                'can_close_or_reopen' => $isStaff || (
-                    $ticket->requester_id === $user->id
-                    && in_array($ticket->status, [
-                        Ticket::STATUS_RESOLVED,
-                        Ticket::STATUS_WAITING_ON_USER,
-                        Ticket::STATUS_CLOSED,
-                    ], true)
-                ),
-                'can_cancel' => $isStaff || (
-                    $ticket->requester_id === $user->id
-                    && $ticket->status === Ticket::STATUS_OPEN
-                ),
-            ],
+            'permissions' => $this->buildTicketPermissions($ticket, $user),
         ]);
     }
 
@@ -323,8 +297,12 @@ class TicketController extends Controller
     ): RedirectResponse {
         $user = $request->user();
 
-        if ($user->isStaff()) {
+        if ($this->canStaffWorkOnTicket($ticket, $user)) {
             return $this->handleStaffWorkflowUpdate($request, $ticket, $user, $ticketService, $notificationService);
+        }
+
+        if ($user->isEngineer()) {
+            abort(403, 'You do not have permission to update this ticket workflow.');
         }
 
         if ($ticket->requester_id === $user->id) {
@@ -341,7 +319,7 @@ class TicketController extends Controller
         NotificationService $notificationService
     ): RedirectResponse {
         $user = $request->user();
-        abort_unless($user->isStaff(), 403);
+        abort_unless($user->isSuperAdmin(), 403);
 
         $oldLeadId = $ticket->lead_engineer_id ? (int) $ticket->lead_engineer_id : null;
         $oldCollaboratorIds = $ticket->collaborators()
@@ -351,41 +329,25 @@ class TicketController extends Controller
             ->values()
             ->all();
 
-        if ($request->input('action') === 'claim') {
-            $newLeadId = $user->id;
-            $collaboratorIds = collect($oldCollaboratorIds)
-                ->reject(fn (int $id) => $id === $newLeadId)
-                ->values()
-                ->all();
-        } else {
-            $validated = $request->validate([
-                'lead_engineer_id' => [
-                    'nullable',
-                    Rule::exists('users', 'id')->where(
-                        fn ($query) => $query
-                            ->where('is_active', true)
-                            ->whereIn('role', [User::ROLE_SUPERADMIN, User::ROLE_ENGINEER])
-                    ),
-                ],
-                'collaborator_ids' => ['nullable', 'array'],
-                'collaborator_ids.*' => [
-                    'integer',
-                    Rule::exists('users', 'id')->where(
-                        fn ($query) => $query
-                            ->where('is_active', true)
-                            ->whereIn('role', [User::ROLE_SUPERADMIN, User::ROLE_ENGINEER])
-                    ),
-                ],
-            ]);
+        $activeEngineerRule = Rule::exists('users', 'id')->where(
+            fn ($query) => $query
+                ->where('is_active', true)
+                ->where('role', User::ROLE_ENGINEER)
+        );
 
-            $newLeadId = isset($validated['lead_engineer_id']) ? (int) $validated['lead_engineer_id'] : null;
-            $collaboratorIds = collect($validated['collaborator_ids'] ?? [])
-                ->map(fn ($id) => (int) $id)
-                ->unique()
-                ->reject(fn (int $id) => $newLeadId !== null && $id === $newLeadId)
-                ->values()
-                ->all();
-        }
+        $validated = $request->validate([
+            'lead_engineer_id' => ['nullable', $activeEngineerRule],
+            'collaborator_ids' => ['nullable', 'array'],
+            'collaborator_ids.*' => ['integer', $activeEngineerRule],
+        ]);
+
+        $newLeadId = isset($validated['lead_engineer_id']) ? (int) $validated['lead_engineer_id'] : null;
+        $collaboratorIds = collect($validated['collaborator_ids'] ?? [])
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->reject(fn (int $id) => $newLeadId !== null && $id === $newLeadId)
+            ->values()
+            ->all();
 
         $ticket->lead_engineer_id = $newLeadId;
         $ticket->save();
@@ -525,7 +487,7 @@ class TicketController extends Controller
             $query->where('internal_system_id', $systemId);
         }
 
-        if ($leadId = $request->input('lead_engineer_id')) {
+        if ($user->isSuperAdmin() && ($leadId = $request->input('lead_engineer_id'))) {
             if ($leadId === 'unassigned') {
                 $query->whereNull('lead_engineer_id');
             } else {
@@ -535,10 +497,10 @@ class TicketController extends Controller
 
         $scope = $request->input('scope');
         match ($scope) {
-            'unassigned' => $query->whereNull('lead_engineer_id'),
+            'unassigned' => !$user->isEngineer() ? $query->whereNull('lead_engineer_id') : null,
             'led_by_me' => $query->where('lead_engineer_id', $user->id),
             'collaborating' => $query->whereHas('collaborators', fn (Builder $c) => $c->where('users.id', $user->id)),
-            'my_submitted' => $query->where('requester_id', $user->id),
+            'my_submitted' => !$user->isEngineer() ? $query->where('requester_id', $user->id) : null,
             'overdue' => $query->whereIn('status', self::ACTIVE_STATUSES)
                 ->whereNotNull('target_due_date')
                 ->whereDate('target_due_date', '<', today()),
@@ -695,8 +657,11 @@ class TicketController extends Controller
 
         if ($validated['action'] === 'confirm_close') {
             if (!in_array($ticket->status, [Ticket::STATUS_RESOLVED, Ticket::STATUS_WAITING_ON_USER], true)) {
+                $message = 'This ticket cannot be confirmed closed in its current status.';
+                $request->session()->flash('error', $message);
+
                 throw ValidationException::withMessages([
-                    'action' => 'This ticket cannot be confirmed closed in its current status.',
+                    'action' => $message,
                 ]);
             }
 
@@ -728,8 +693,11 @@ class TicketController extends Controller
 
         if ($validated['action'] === 'reopen') {
             if (!in_array($ticket->status, [Ticket::STATUS_RESOLVED, Ticket::STATUS_CLOSED], true)) {
+                $message = 'Only resolved or closed tickets can be reopened.';
+                $request->session()->flash('error', $message);
+
                 throw ValidationException::withMessages([
-                    'action' => 'Only resolved or closed tickets can be reopened.',
+                    'action' => $message,
                 ]);
             }
 
@@ -771,8 +739,11 @@ class TicketController extends Controller
 
         // action === 'cancel'
         if ($ticket->status !== Ticket::STATUS_OPEN) {
+            $message = 'Only open tickets can be cancelled.';
+            $request->session()->flash('error', $message);
+
             throw ValidationException::withMessages([
-                'action' => 'Only open tickets can be cancelled.',
+                'action' => $message,
             ]);
         }
 
@@ -800,6 +771,78 @@ class TicketController extends Controller
         return back()->with('success', 'Ticket cancelled.');
     }
 
+    private function loadTicketDetails(Ticket $ticket, bool $isStaff): Ticket
+    {
+        return $ticket->load([
+            'internalSystem',
+            'requester',
+            'leadEngineer',
+            'collaborators',
+            'subtasks' => fn ($query) => $query->orderBy('id')->with('assignedEngineer'),
+            'activities' => fn ($query) => $query->orderByDesc('created_at')->orderByDesc('id')->with('user'),
+            'comments' => function ($query) use ($isStaff): void {
+                if (!$isStaff) {
+                    $query->where('is_internal', false);
+                }
+
+                $query->orderBy('created_at')->orderBy('id')->with([
+                    'user',
+                    'attachments' => function ($attachmentQuery) use ($isStaff): void {
+                        if (!$isStaff) {
+                            $attachmentQuery->where('is_internal', false);
+                        }
+                    },
+                ]);
+            },
+            'attachments' => function ($query) use ($isStaff): void {
+                if (!$isStaff) {
+                    $query->where('is_internal', false);
+                }
+
+                $query->orderBy('created_at')->orderBy('id')->with('uploadedBy');
+            },
+        ]);
+    }
+
+    private function canStaffWorkOnTicket(Ticket $ticket, User $user): bool
+    {
+        return $ticket->canBeWorkedOnBy($user);
+    }
+
+    /**
+     * @return array{
+     *     can_manage_workflow: bool,
+     *     can_assign: bool,
+     *     can_post_internal_note: bool,
+     *     can_manage_subtasks: bool,
+     *     can_close_or_reopen: bool,
+     *     can_cancel: bool
+     * }
+     */
+    private function buildTicketPermissions(Ticket $ticket, User $user): array
+    {
+        $canWorkOnTicket = $this->canStaffWorkOnTicket($ticket, $user);
+
+        return [
+            'can_manage_workflow' => $canWorkOnTicket,
+            'can_assign' => $user->isSuperAdmin(),
+            'can_post_internal_note' => $canWorkOnTicket,
+            'can_manage_subtasks' => $canWorkOnTicket,
+            'can_close_or_reopen' => $canWorkOnTicket || (
+                $ticket->requester_id === $user->id
+                && in_array($ticket->status, [
+                    Ticket::STATUS_RESOLVED,
+                    Ticket::STATUS_WAITING_ON_USER,
+                    Ticket::STATUS_CLOSED,
+                ], true)
+            ),
+            'can_cancel' => $canWorkOnTicket || (
+                $ticket->requester_id === $user->id
+                && $ticket->status === Ticket::STATUS_OPEN
+            ),
+        ];
+    }
+
     /**
      * @return \Illuminate\Database\Eloquent\Collection<int, User>
      */
@@ -807,7 +850,7 @@ class TicketController extends Controller
     {
         return User::query()
             ->where('is_active', true)
-            ->whereIn('role', [User::ROLE_SUPERADMIN, User::ROLE_ENGINEER])
+            ->where('role', User::ROLE_ENGINEER)
             ->orderBy('name')
             ->get(['id', 'name', 'username', 'role', 'job_title']);
     }

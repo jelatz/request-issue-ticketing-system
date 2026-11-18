@@ -1,8 +1,9 @@
 <script setup>
-import { computed, reactive, ref } from 'vue';
-import { Head, Link, router } from '@inertiajs/vue3';
+import { computed, onUnmounted, reactive, ref } from 'vue';
+import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import PriorityBadge from '../../Components/PriorityBadge.vue';
+import TicketDetailModal from '../../Components/TicketDetailModal.vue';
 import { useNewTicketModal } from '../../composables/useNewTicketModal';
 import { STATUS_LABELS, formatDate, isTicketOverdue } from '../../utils/formatters';
 
@@ -23,8 +24,18 @@ const props = defineProps({
         type: Array,
         default: () => [],
     },
+    selectedTicket: {
+        type: Object,
+        default: null,
+    },
+    selectedTicketPermissions: {
+        type: Object,
+        default: null,
+    },
 });
 
+const page = usePage();
+const user = computed(() => page.props.auth?.user || null);
 const { openNewTicketModal } = useNewTicketModal();
 
 const columnDefinitions = [
@@ -60,7 +71,9 @@ const filterForm = reactive({
 const showClosedRejected = ref(false);
 const draggedTicket = ref(null);
 const dragOverColumn = ref(null);
+const isDragging = ref(false);
 let searchDebounceTimer = null;
+let dragResetTimer = null;
 
 const visibleColumns = computed(() => {
     return showClosedRejected.value
@@ -80,18 +93,45 @@ const hasActiveFilters = computed(() => {
     return Object.values(filterForm).some((value) => value !== '' && value !== null && value !== undefined);
 });
 
-function applyFilters() {
+function buildFilterParams() {
     const params = {};
     for (const [key, value] of Object.entries(filterForm)) {
         if (value !== '' && value !== null && value !== undefined) {
             params[key] = value;
         }
     }
+    return params;
+}
 
-    router.get('/tickets/kanban', params, {
+function applyFilters() {
+    router.get('/tickets/kanban', buildFilterParams(), {
         preserveState: true,
         preserveScroll: true,
         replace: true,
+    });
+}
+
+function openTicketModal(ticket) {
+    if (isDragging.value) {
+        return;
+    }
+
+    router.get(
+        '/tickets/kanban',
+        { ...buildFilterParams(), ticket: ticket.id },
+        {
+            preserveState: true,
+            preserveScroll: true,
+            only: ['selectedTicket', 'selectedTicketPermissions'],
+        }
+    );
+}
+
+function closeTicketModal() {
+    router.get('/tickets/kanban', buildFilterParams(), {
+        preserveState: true,
+        preserveScroll: true,
+        only: ['selectedTicket', 'selectedTicketPermissions'],
     });
 }
 
@@ -133,6 +173,11 @@ function quickTransition(ticket, nextStatus) {
 }
 
 function onDragStart(event, ticket) {
+    if (dragResetTimer) {
+        clearTimeout(dragResetTimer);
+        dragResetTimer = null;
+    }
+    isDragging.value = true;
     draggedTicket.value = ticket;
     if (event.dataTransfer) {
         event.dataTransfer.effectAllowed = 'move';
@@ -143,6 +188,13 @@ function onDragStart(event, ticket) {
 function onDragEnd() {
     draggedTicket.value = null;
     dragOverColumn.value = null;
+    if (dragResetTimer) {
+        clearTimeout(dragResetTimer);
+    }
+    dragResetTimer = setTimeout(() => {
+        isDragging.value = false;
+        dragResetTimer = null;
+    }, 0);
 }
 
 function onDragOver(colKey) {
@@ -183,6 +235,15 @@ function formatShortName(name) {
     }
     return `${parts[0]} ${parts[parts.length - 1].charAt(0)}.`;
 }
+
+onUnmounted(() => {
+    if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+    }
+    if (dragResetTimer) {
+        clearTimeout(dragResetTimer);
+    }
+});
 </script>
 
 <template>
@@ -248,6 +309,7 @@ function formatShortName(name) {
                     </select>
 
                     <select
+                        v-if="user?.is_super_admin"
                         id="kanban-lead"
                         v-model="filterForm.lead_engineer_id"
                         aria-label="Filter by lead engineer"
@@ -295,10 +357,10 @@ function formatShortName(name) {
                         @change="applyFilters"
                     >
                         <option value="">All visible</option>
-                        <option value="unassigned">Unassigned</option>
+                        <option v-if="user?.is_super_admin" value="unassigned">Unassigned</option>
                         <option value="led_by_me">Led by me</option>
                         <option value="collaborating">Collaborating</option>
-                        <option value="my_submitted">Submitted by me</option>
+                        <option v-if="user?.is_super_admin" value="my_submitted">Submitted by me</option>
                         <option value="overdue">Overdue</option>
                     </select>
 
@@ -365,29 +427,26 @@ function formatShortName(name) {
                                 v-for="ticket in columns[col.key] || []"
                                 :key="ticket.id"
                                 draggable="true"
-                                class="bg-white border border-slate-200 rounded-md p-3 space-y-2 hover:border-slate-300 transition-colors cursor-grab active:cursor-grabbing"
+                                tabindex="0"
+                                class="group bg-white border border-slate-200 rounded-md p-3 space-y-2 hover:border-slate-300 transition-colors cursor-pointer active:cursor-grabbing focus:outline-none focus:ring-2 focus:ring-blue-500/40"
                                 :class="draggedTicket?.id === ticket.id ? 'opacity-50' : ''"
+                                @click="openTicketModal(ticket)"
+                                @keydown.enter.self="openTicketModal(ticket)"
                                 @dragstart="onDragStart($event, ticket)"
                                 @dragend="onDragEnd"
                             >
                                 <!-- Top Row: Ticket Key + Priority -->
                                 <div class="flex items-center justify-between gap-2">
-                                    <Link
-                                        :href="`/tickets/${ticket.id}`"
-                                        class="font-mono text-[11px] text-slate-500 hover:text-blue-600 transition-colors"
-                                    >
+                                    <span class="font-mono text-[11px] text-slate-500 group-hover:text-blue-600 transition-colors">
                                         {{ ticket.ticket_number }}
-                                    </Link>
+                                    </span>
                                     <PriorityBadge :priority="ticket.priority" compact />
                                 </div>
 
                                 <!-- Title -->
-                                <Link
-                                    :href="`/tickets/${ticket.id}`"
-                                    class="block text-[13px] font-medium text-slate-900 leading-snug line-clamp-2 hover:text-blue-600 transition-colors"
-                                >
+                                <h3 class="block text-[13px] font-medium text-slate-900 leading-snug line-clamp-2 group-hover:text-blue-600 transition-colors">
                                     {{ ticket.title }}
-                                </Link>
+                                </h3>
 
                                 <!-- Compact Metadata Row -->
                                 <div class="flex flex-wrap items-center justify-between gap-1.5 pt-0.5 text-[11px] text-slate-500">
@@ -456,5 +515,13 @@ function formatShortName(name) {
                 </div>
             </div>
         </div>
+
+        <TicketDetailModal
+            :show="Boolean(selectedTicket && selectedTicketPermissions)"
+            :ticket="selectedTicket"
+            :engineers="engineers"
+            :permissions="selectedTicketPermissions"
+            @close="closeTicketModal"
+        />
     </AppLayout>
 </template>

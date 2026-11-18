@@ -39,7 +39,7 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::patch('/tickets/{ticket}/workflow', [TicketController::class, 'updateWorkflow'])
         ->name('tickets.workflow.update');
     Route::patch('/tickets/{ticket}/assignment', [TicketController::class, 'updateAssignment'])
-        ->middleware('role:superadmin,engineer')
+        ->middleware('role:superadmin')
         ->name('tickets.assignment.update');
 
     Route::post('/tickets/{ticket}/comments', [TicketCommentController::class, 'store'])

@@ -34,73 +34,79 @@ class TicketCommentController extends Controller
 
         $isInternal = $user->isStaff() ? $request->boolean('is_internal') : false;
 
-        $comment = TicketComment::create([
-            'ticket_id' => $ticket->id,
-            'user_id' => $user->id,
-            'body' => $validated['body'],
-            'is_internal' => $isInternal,
-        ]);
-
-        foreach ($request->file('attachments', []) as $file) {
-            $storedPath = $file->store("tickets/{$ticket->id}/comments/{$comment->id}", 'public');
-
-            TicketAttachment::create([
+        try {
+            $comment = TicketComment::create([
                 'ticket_id' => $ticket->id,
-                'ticket_comment_id' => $comment->id,
-                'uploaded_by_id' => $user->id,
-                'original_name' => $file->getClientOriginalName(),
-                'file_path' => $storedPath,
-                'mime_type' => $file->getClientMimeType(),
-                'file_size' => $file->getSize() ?? 0,
+                'user_id' => $user->id,
+                'body' => $validated['body'],
                 'is_internal' => $isInternal,
             ]);
-        }
 
-        if ($user->isStaff()) {
-            $ticketService->markFirstResponseIfNeeded($ticket, $user);
-        }
+            foreach ($request->file('attachments', []) as $file) {
+                $storedPath = $file->store("tickets/{$ticket->id}/comments/{$comment->id}", 'public');
 
-        $ticket->loadMissing(['requester', 'leadEngineer', 'collaborators']);
-        $actionUrl = route('tickets.show', $ticket, false);
-
-        if ($isInternal) {
-            $staffRecipients = collect([$ticket->leadEngineer])
-                ->merge($ticket->collaborators)
-                ->filter(fn ($recipient) => $recipient instanceof User && $recipient->isStaff());
-
-            $notificationService->notifyUsers(
-                $staffRecipients,
-                $ticket,
-                "Internal Note on {$ticket->ticket_number}",
-                "{$user->name} added an internal engineering note on \"{$ticket->title}\".",
-                $actionUrl,
-                $user->id
-            );
-        } else {
-            $ticketService->recordActivity(
-                $ticket,
-                $user,
-                'comment_added',
-                "{$user->name} added a comment."
-            );
-
-            $recipients = collect([$ticket->leadEngineer])
-                ->merge($ticket->collaborators);
-
-            if ($ticket->requester) {
-                $recipients->push($ticket->requester);
+                TicketAttachment::create([
+                    'ticket_id' => $ticket->id,
+                    'ticket_comment_id' => $comment->id,
+                    'uploaded_by_id' => $user->id,
+                    'original_name' => $file->getClientOriginalName(),
+                    'file_path' => $storedPath,
+                    'mime_type' => $file->getClientMimeType(),
+                    'file_size' => $file->getSize() ?? 0,
+                    'is_internal' => $isInternal,
+                ]);
             }
 
-            $notificationService->notifyUsers(
-                $recipients,
-                $ticket,
-                "New Comment on {$ticket->ticket_number}",
-                "{$user->name} commented on \"{$ticket->title}\".",
-                $actionUrl,
-                $user->id
-            );
-        }
+            if ($user->isStaff()) {
+                $ticketService->markFirstResponseIfNeeded($ticket, $user);
+            }
 
-        return back()->with('success', $isInternal ? 'Internal engineering note posted.' : 'Comment posted.');
+            $ticket->loadMissing(['requester', 'leadEngineer', 'collaborators']);
+            $actionUrl = route('tickets.show', $ticket, false);
+
+            if ($isInternal) {
+                $staffRecipients = collect([$ticket->leadEngineer])
+                    ->merge($ticket->collaborators)
+                    ->filter(fn ($recipient) => $recipient instanceof User && $recipient->isStaff());
+
+                $notificationService->notifyUsers(
+                    $staffRecipients,
+                    $ticket,
+                    "Internal Note on {$ticket->ticket_number}",
+                    "{$user->name} added an internal engineering note on \"{$ticket->title}\".",
+                    $actionUrl,
+                    $user->id
+                );
+            } else {
+                $ticketService->recordActivity(
+                    $ticket,
+                    $user,
+                    'comment_added',
+                    "{$user->name} added a comment."
+                );
+
+                $recipients = collect([$ticket->leadEngineer])
+                    ->merge($ticket->collaborators);
+
+                if ($ticket->requester) {
+                    $recipients->push($ticket->requester);
+                }
+
+                $notificationService->notifyUsers(
+                    $recipients,
+                    $ticket,
+                    "New Comment on {$ticket->ticket_number}",
+                    "{$user->name} commented on \"{$ticket->title}\".",
+                    $actionUrl,
+                    $user->id
+                );
+            }
+
+            return back()->with('success', $isInternal ? 'Internal engineering note posted.' : 'Comment posted.');
+        } catch (\Throwable $e) {
+            report($e);
+
+            return back()->with('error', 'Failed to post comment. Please try again.');
+        }
     }
 }
