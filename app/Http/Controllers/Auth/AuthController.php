@@ -26,11 +26,11 @@ class AuthController extends Controller
             'remember' => ['sometimes', 'boolean'],
         ]);
 
-        $loginInput = trim($validated['login']);
+        $loginInput = mb_strtolower(trim($validated['login']));
 
         $user = User::query()
-            ->where('email', $loginInput)
-            ->orWhere('username', $loginInput)
+            ->whereRaw('LOWER(email) = ?', [$loginInput])
+            ->orWhereRaw('LOWER(username) = ?', [$loginInput])
             ->first();
 
         if ($user && !$user->is_active) {

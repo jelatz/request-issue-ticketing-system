@@ -56,6 +56,7 @@ onUnmounted(() => {
             class="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto"
             role="dialog"
             aria-modal="true"
+            aria-labelledby="modal-dialog-title"
         >
             <div
                 class="fixed inset-0 bg-slate-900/40 backdrop-blur-[1px]"
@@ -67,7 +68,7 @@ onUnmounted(() => {
                 :class="maxWidth"
             >
                 <div class="flex items-center justify-between px-5 py-3.5 border-b border-slate-200 bg-white">
-                    <h3 class="text-sm font-semibold text-slate-900">
+                    <h3 id="modal-dialog-title" class="text-sm font-semibold text-slate-900">
                         {{ title }}
                     </h3>
                     <button

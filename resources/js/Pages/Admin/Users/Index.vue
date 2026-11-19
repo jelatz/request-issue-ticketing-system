@@ -9,6 +9,12 @@ import { useFeedback } from '../../../composables/useFeedback';
 
 const { notifyError } = useFeedback();
 
+const EMAIL_FORMAT_REGEX = /^[^\s@]+@(?:[^\s@.]+\.)+[^\s@.]{2,}$/;
+
+function isValidEmailAddress(value) {
+    return EMAIL_FORMAT_REGEX.test(String(value || '').trim());
+}
+
 function formatValidationErrorMessage(errors) {
     const messages = Object.values(errors || {}).filter(
         (v) => typeof v === 'string' && v.length > 0
@@ -120,14 +126,39 @@ const createForm = useForm({
     is_active: true,
 });
 
+const createUnlockedFields = reactive({
+    name: false,
+    username: false,
+    email: false,
+    password: false,
+});
+
+function resetCreateUnlockedFields() {
+    createUnlockedFields.name = false;
+    createUnlockedFields.username = false;
+    createUnlockedFields.email = false;
+    createUnlockedFields.password = false;
+}
+
+function unlockCreateField(field, event) {
+    if (!createUnlockedFields[field]) {
+        createUnlockedFields[field] = true;
+    }
+    if (event?.target?.hasAttribute('readonly')) {
+        event.target.removeAttribute('readonly');
+    }
+}
+
 function openCreateModal() {
     createForm.reset();
     createForm.clearErrors();
+    resetCreateUnlockedFields();
     showCreateModal.value = true;
 }
 
 function closeCreateModal() {
     showCreateModal.value = false;
+    resetCreateUnlockedFields();
 }
 
 function submitCreate() {
@@ -141,8 +172,10 @@ function submitCreate() {
     }
     if (!String(createForm.email || '').trim()) {
         createForm.setError('email', 'Please enter an email address.');
+    } else if (!isValidEmailAddress(createForm.email)) {
+        createForm.setError('email', 'Please enter a valid email address with a domain (e.g. name@calltek.local).');
     }
-    if (!createForm.password) {
+    if (!String(createForm.password || '').trim()) {
         createForm.setError('password', 'Please enter an initial password.');
     } else if (String(createForm.password).length < 6) {
         createForm.setError('password', 'Password must be at least 6 characters.');
@@ -174,6 +207,7 @@ function submitCreate() {
 // Edit Modal
 const showEditModal = ref(false);
 const editingUser = ref(null);
+const editPasswordUnlocked = ref(false);
 const editForm = useForm({
     name: '',
     username: '',
@@ -185,12 +219,22 @@ const editForm = useForm({
     is_active: true,
 });
 
+function unlockEditPassword(event) {
+    if (!editPasswordUnlocked.value) {
+        editPasswordUnlocked.value = true;
+    }
+    if (event?.target?.hasAttribute('readonly')) {
+        event.target.removeAttribute('readonly');
+    }
+}
+
 const isEditingSelf = computed(
     () => Boolean(editingUser.value && currentUser.value && editingUser.value.id === currentUser.value.id)
 );
 
 function openEditModal(userRow) {
     editingUser.value = userRow;
+    editPasswordUnlocked.value = false;
     editForm.clearErrors();
     editForm.name = userRow.name || '';
     editForm.username = userRow.username || '';
@@ -206,6 +250,7 @@ function openEditModal(userRow) {
 function closeEditModal() {
     showEditModal.value = false;
     editingUser.value = null;
+    editPasswordUnlocked.value = false;
 }
 
 function submitEdit() {
@@ -223,9 +268,15 @@ function submitEdit() {
     }
     if (!String(editForm.email || '').trim()) {
         editForm.setError('email', 'Please enter an email address.');
+    } else if (!isValidEmailAddress(editForm.email)) {
+        editForm.setError('email', 'Please enter a valid email address with a domain (e.g. name@calltek.local).');
     }
-    if (editForm.password && String(editForm.password).length < 6) {
-        editForm.setError('password', 'Password must be at least 6 characters.');
+    if (String(editForm.password || '').length > 0) {
+        if (!String(editForm.password).trim()) {
+            editForm.setError('password', 'Password cannot contain only whitespace.');
+        } else if (String(editForm.password).length < 6) {
+            editForm.setError('password', 'Password must be at least 6 characters.');
+        }
     }
     if (!editForm.role) {
         editForm.setError('role', 'Please select a role.');
@@ -318,6 +369,7 @@ function toggleUserStatus(userRow) {
                 >
                     <div class="flex flex-wrap items-center gap-2">
                         <input
+                            id="admin-users-search"
                             v-model="filterForm.search"
                             type="text"
                             aria-label="Search user accounts"
@@ -327,6 +379,7 @@ function toggleUserStatus(userRow) {
                         />
 
                         <select
+                            id="admin-users-role"
                             v-model="filterForm.role"
                             aria-label="Filter by role"
                             class="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md text-slate-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -339,6 +392,7 @@ function toggleUserStatus(userRow) {
                         </select>
 
                         <select
+                            id="admin-users-status"
                             v-model="filterForm.is_active"
                             aria-label="Filter by status"
                             class="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md text-slate-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
@@ -485,15 +539,21 @@ function toggleUserStatus(userRow) {
             max-width="max-w-xl"
             @close="closeCreateModal"
         >
-            <form novalidate class="space-y-4" @submit.prevent="submitCreate">
+            <form novalidate autocomplete="off" class="space-y-4" @submit.prevent="submitCreate">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-name" class="block text-xs font-medium text-slate-700 mb-1">
                             Full name
                         </label>
                         <input
+                            id="create-user-name"
                             v-model="createForm.name"
                             type="text"
+                            name="create_user_full_name"
+                            autocomplete="off"
+                            :readonly="!createUnlockedFields.name"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -501,6 +561,8 @@ function toggleUserStatus(userRow) {
                                     ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
                                     : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
                             "
+                            @focus="unlockCreateField('name', $event)"
+                            @pointerdown="unlockCreateField('name', $event)"
                             @input="createForm.clearErrors('name')"
                         />
                         <p v-if="createForm.errors.name" class="mt-1 text-xs text-rose-600">
@@ -509,12 +571,20 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-username" class="block text-xs font-medium text-slate-700 mb-1">
                             Username
                         </label>
                         <input
+                            id="create-user-username"
                             v-model="createForm.username"
                             type="text"
+                            name="create_user_handle"
+                            autocomplete="off"
+                            autocapitalize="off"
+                            spellcheck="false"
+                            :readonly="!createUnlockedFields.username"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -522,6 +592,8 @@ function toggleUserStatus(userRow) {
                                     ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
                                     : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
                             "
+                            @focus="unlockCreateField('username', $event)"
+                            @pointerdown="unlockCreateField('username', $event)"
                             @input="createForm.clearErrors('username')"
                         />
                         <p v-if="createForm.errors.username" class="mt-1 text-xs text-rose-600">
@@ -532,12 +604,18 @@ function toggleUserStatus(userRow) {
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-email" class="block text-xs font-medium text-slate-700 mb-1">
                             Email address
                         </label>
                         <input
+                            id="create-user-email"
                             v-model="createForm.email"
                             type="email"
+                            name="create_user_email_address"
+                            autocomplete="off"
+                            :readonly="!createUnlockedFields.email"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -545,6 +623,8 @@ function toggleUserStatus(userRow) {
                                     ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
                                     : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
                             "
+                            @focus="unlockCreateField('email', $event)"
+                            @pointerdown="unlockCreateField('email', $event)"
                             @input="createForm.clearErrors('email')"
                         />
                         <p v-if="createForm.errors.email" class="mt-1 text-xs text-rose-600">
@@ -553,12 +633,18 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-password" class="block text-xs font-medium text-slate-700 mb-1">
                             Initial password
                         </label>
                         <input
+                            id="create-user-password"
                             v-model="createForm.password"
                             type="password"
+                            name="create_user_initial_passphrase"
+                            autocomplete="new-password"
+                            :readonly="!createUnlockedFields.password"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
                             required
                             minlength="6"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
@@ -567,6 +653,8 @@ function toggleUserStatus(userRow) {
                                     ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
                                     : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
                             "
+                            @focus="unlockCreateField('password', $event)"
+                            @pointerdown="unlockCreateField('password', $event)"
                             @input="createForm.clearErrors('password')"
                         />
                         <p v-if="createForm.errors.password" class="mt-1 text-xs text-rose-600">
@@ -577,10 +665,11 @@ function toggleUserStatus(userRow) {
 
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-role" class="block text-xs font-medium text-slate-700 mb-1">
                             Role
                         </label>
                         <select
+                            id="create-user-role"
                             v-model="createForm.role"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 bg-white focus:outline-none focus:ring-1"
@@ -601,12 +690,15 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-department" class="block text-xs font-medium text-slate-700 mb-1">
                             Department
                         </label>
                         <input
+                            id="create-user-department"
                             v-model="createForm.department"
                             type="text"
+                            name="create_user_department"
+                            autocomplete="off"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
                                 createForm.errors.department
@@ -621,12 +713,15 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-user-job-title" class="block text-xs font-medium text-slate-700 mb-1">
                             Job title
                         </label>
                         <input
+                            id="create-user-job-title"
                             v-model="createForm.job_title"
                             type="text"
+                            name="create_user_job_title"
+                            autocomplete="off"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
                                 createForm.errors.job_title
@@ -642,8 +737,9 @@ function toggleUserStatus(userRow) {
                 </div>
 
                 <div class="pt-1">
-                    <label class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                    <label for="create-user-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                         <input
+                            id="create-user-active"
                             v-model="createForm.is_active"
                             type="checkbox"
                             class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -681,15 +777,18 @@ function toggleUserStatus(userRow) {
             max-width="max-w-xl"
             @close="closeEditModal"
         >
-            <form novalidate class="space-y-4" @submit.prevent="submitEdit">
+            <form novalidate autocomplete="off" class="space-y-4" @submit.prevent="submitEdit">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-name" class="block text-xs font-medium text-slate-700 mb-1">
                             Full name
                         </label>
                         <input
+                            id="edit-user-name"
                             v-model="editForm.name"
                             type="text"
+                            name="edit_user_full_name"
+                            autocomplete="off"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -705,12 +804,17 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-username" class="block text-xs font-medium text-slate-700 mb-1">
                             Username
                         </label>
                         <input
+                            id="edit-user-username"
                             v-model="editForm.username"
                             type="text"
+                            name="edit_user_handle"
+                            autocomplete="off"
+                            autocapitalize="off"
+                            spellcheck="false"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm font-mono text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -728,12 +832,15 @@ function toggleUserStatus(userRow) {
 
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-email" class="block text-xs font-medium text-slate-700 mb-1">
                             Email address
                         </label>
                         <input
+                            id="edit-user-email"
                             v-model="editForm.email"
                             type="email"
+                            name="edit_user_email_address"
+                            autocomplete="off"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -749,12 +856,18 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-password" class="block text-xs font-medium text-slate-700 mb-1">
                             New password (optional)
                         </label>
                         <input
+                            id="edit-user-password"
                             v-model="editForm.password"
                             type="password"
+                            name="edit_user_new_passphrase"
+                            autocomplete="new-password"
+                            :readonly="!editPasswordUnlocked"
+                            data-lpignore="true"
+                            data-1p-ignore="true"
                             minlength="6"
                             placeholder="Leave blank to keep current"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
@@ -763,6 +876,8 @@ function toggleUserStatus(userRow) {
                                     ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500'
                                     : 'border-slate-300 focus:border-blue-500 focus:ring-blue-500'
                             "
+                            @focus="unlockEditPassword($event)"
+                            @pointerdown="unlockEditPassword($event)"
                             @input="editForm.clearErrors('password')"
                         />
                         <p v-if="editForm.errors.password" class="mt-1 text-xs text-rose-600">
@@ -773,10 +888,11 @@ function toggleUserStatus(userRow) {
 
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-role" class="block text-xs font-medium text-slate-700 mb-1">
                             Role
                         </label>
                         <select
+                            id="edit-user-role"
                             v-model="editForm.role"
                             required
                             :disabled="isEditingSelf"
@@ -798,12 +914,15 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-department" class="block text-xs font-medium text-slate-700 mb-1">
                             Department
                         </label>
                         <input
+                            id="edit-user-department"
                             v-model="editForm.department"
                             type="text"
+                            name="edit_user_department"
+                            autocomplete="off"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
                                 editForm.errors.department
@@ -818,12 +937,15 @@ function toggleUserStatus(userRow) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-user-job-title" class="block text-xs font-medium text-slate-700 mb-1">
                             Job title
                         </label>
                         <input
+                            id="edit-user-job-title"
                             v-model="editForm.job_title"
                             type="text"
+                            name="edit_user_job_title"
+                            autocomplete="off"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
                                 editForm.errors.job_title
@@ -839,8 +961,9 @@ function toggleUserStatus(userRow) {
                 </div>
 
                 <div class="pt-1 space-y-1">
-                    <label class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                    <label for="edit-user-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                         <input
+                            id="edit-user-active"
                             v-model="editForm.is_active"
                             type="checkbox"
                             :disabled="isEditingSelf"

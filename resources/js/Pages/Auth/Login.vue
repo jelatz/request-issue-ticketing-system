@@ -31,30 +31,6 @@ const demoAccounts = [
         password: 'password',
         roleHint: 'Full Admin & Triage',
     },
-    {
-        label: 'Lead Engineer',
-        username: 'engineer1',
-        password: 'password',
-        roleHint: 'Platform Engineering',
-    },
-    {
-        label: 'Network Engineer',
-        username: 'engineer2',
-        password: 'password',
-        roleHint: 'NOC Infrastructure',
-    },
-    {
-        label: 'Operations User',
-        username: 'user1',
-        password: 'password',
-        roleHint: 'Standard Requester',
-    },
-    {
-        label: 'Billing User',
-        username: 'user2',
-        password: 'password',
-        roleHint: 'Finance & Billing',
-    },
 ];
 
 function fillDemoCredentials(account) {
@@ -109,7 +85,7 @@ function submit() {
                     autocomplete="username"
                     required
                     autofocus
-                    placeholder="engineer1 or name@calltek.local"
+                    placeholder="superadmin or name@calltek.local"
                     class="w-full px-3 py-1.5 text-sm text-slate-900 bg-white border rounded-md placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                     :class="form.errors.login ? 'border-rose-400' : 'border-slate-300'"
                 />

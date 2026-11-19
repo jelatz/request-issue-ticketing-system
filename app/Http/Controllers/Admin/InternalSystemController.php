@@ -15,6 +15,7 @@ class InternalSystemController extends Controller
     {
         $systems = InternalSystem::query()
             ->withCount('tickets')
+            ->orderByRaw('LOWER(name) ASC')
             ->orderBy('name')
             ->get();
 
@@ -26,7 +27,7 @@ class InternalSystemController extends Controller
     public function store(Request $request): RedirectResponse
     {
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255', $this->uniqueCaseInsensitiveNameRule()],
             'category' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'is_active' => ['boolean'],
@@ -45,7 +46,7 @@ class InternalSystemController extends Controller
     public function update(Request $request, InternalSystem $system): RedirectResponse
     {
         $validated = $request->validate([
-            'name' => ['required', 'string', 'max:255'],
+            'name' => ['required', 'string', 'max:255', $this->uniqueCaseInsensitiveNameRule($system->id)],
             'category' => ['nullable', 'string', 'max:255'],
             'description' => ['nullable', 'string'],
             'is_active' => ['required', 'boolean'],
@@ -59,5 +60,21 @@ class InternalSystemController extends Controller
         ]);
 
         return back()->with('success', "System {$system->name} updated successfully.");
+    }
+
+    private function uniqueCaseInsensitiveNameRule(?int $ignoreSystemId = null): \Closure
+    {
+        return function (string $attribute, mixed $value, \Closure $fail) use ($ignoreSystemId): void {
+            $normalized = mb_strtolower(trim((string) $value));
+
+            $exists = InternalSystem::query()
+                ->whereRaw('LOWER(name) = ?', [$normalized])
+                ->when($ignoreSystemId !== null, fn ($query) => $query->where('id', '!=', $ignoreSystemId))
+                ->exists();
+
+            if ($exists) {
+                $fail(__('validation.unique', ['attribute' => $attribute]));
+            }
+        };
     }
 }

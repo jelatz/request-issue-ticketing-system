@@ -88,7 +88,7 @@ class TicketController extends Controller
 
         return Inertia::render('Tickets/Index', [
             'tickets' => $tickets,
-            'filters' => $request->only([
+            'filters' => $this->extractFilters($request, [
                 'search',
                 'type',
                 'status',
@@ -99,6 +99,7 @@ class TicketController extends Controller
             ]),
             'systems' => InternalSystem::query()
                 ->where('is_active', true)
+                ->orderByRaw('LOWER(name) ASC')
                 ->orderBy('name')
                 ->get(['id', 'name']),
             'engineers' => $this->activeStaffList(),
@@ -124,6 +125,7 @@ class TicketController extends Controller
         $tickets = $query
             ->orderByRaw("CASE priority WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END ASC")
             ->orderByDesc('updated_at')
+            ->orderByDesc('id')
             ->get();
 
         $columns = [];
@@ -138,7 +140,7 @@ class TicketController extends Controller
 
         return Inertia::render('Tickets/Kanban', [
             'columns' => $columns,
-            'filters' => $request->only([
+            'filters' => $this->extractFilters($request, [
                 'search',
                 'type',
                 'priority',
@@ -148,6 +150,7 @@ class TicketController extends Controller
             ]),
             'systems' => InternalSystem::query()
                 ->where('is_active', true)
+                ->orderByRaw('LOWER(name) ASC')
                 ->orderBy('name')
                 ->get(['id', 'name']),
             'engineers' => $this->activeStaffList(),
@@ -463,31 +466,44 @@ class TicketController extends Controller
      */
     private function applyFilters(Builder $query, Request $request, User $user, bool $includeStatus): void
     {
-        if ($search = trim((string) $request->input('search', ''))) {
-            $query->where(function (Builder $subQuery) use ($search): void {
-                $subQuery->where('ticket_number', 'like', "%{$search}%")
-                    ->orWhere('title', 'like', "%{$search}%")
-                    ->orWhere('description', 'like', "%{$search}%");
+        $search = $this->scalarInput($request, 'search');
+        if ($search !== '') {
+            $escapedSearch = str_replace(
+                ['\\', '%', '_'],
+                ['\\\\', '\\%', '\\_'],
+                mb_strtolower($search)
+            );
+            $likePattern = "%{$escapedSearch}%";
+
+            $query->where(function (Builder $subQuery) use ($likePattern): void {
+                $subQuery->whereRaw("LOWER(ticket_number) LIKE ? ESCAPE '\\'", [$likePattern])
+                    ->orWhereRaw("LOWER(title) LIKE ? ESCAPE '\\'", [$likePattern])
+                    ->orWhereRaw("LOWER(description) LIKE ? ESCAPE '\\'", [$likePattern]);
             });
         }
 
-        if ($type = $request->input('type')) {
+        $type = $this->scalarInput($request, 'type');
+        if ($type !== '') {
             $query->where('type', $type);
         }
 
-        if ($includeStatus && ($status = $request->input('status'))) {
+        $status = $this->scalarInput($request, 'status');
+        if ($includeStatus && $status !== '') {
             $query->where('status', $status);
         }
 
-        if ($priority = $request->input('priority')) {
+        $priority = $this->scalarInput($request, 'priority');
+        if ($priority !== '') {
             $query->where('priority', $priority);
         }
 
-        if ($systemId = $request->input('internal_system_id')) {
+        $systemId = $this->scalarInput($request, 'internal_system_id');
+        if ($systemId !== '') {
             $query->where('internal_system_id', $systemId);
         }
 
-        if ($user->isSuperAdmin() && ($leadId = $request->input('lead_engineer_id'))) {
+        $leadId = $this->scalarInput($request, 'lead_engineer_id');
+        if ($user->isSuperAdmin() && $leadId !== '') {
             if ($leadId === 'unassigned') {
                 $query->whereNull('lead_engineer_id');
             } else {
@@ -495,7 +511,7 @@ class TicketController extends Controller
             }
         }
 
-        $scope = $request->input('scope');
+        $scope = $this->scalarInput($request, 'scope');
         match ($scope) {
             'unassigned' => !$user->isEngineer() ? $query->whereNull('lead_engineer_id') : null,
             'led_by_me' => $query->where('lead_engineer_id', $user->id),
@@ -506,6 +522,32 @@ class TicketController extends Controller
                 ->whereDate('target_due_date', '<', today()),
             default => null,
         };
+    }
+
+    private function scalarInput(Request $request, string $key): string
+    {
+        $value = $request->input($key);
+
+        return is_scalar($value) ? trim((string) $value) : '';
+    }
+
+    /**
+     * @param list<string> $keys
+     * @return array<string, string|null>
+     */
+    private function extractFilters(Request $request, array $keys): array
+    {
+        $filters = [];
+        foreach ($request->only($keys) as $key => $value) {
+            if (is_scalar($value)) {
+                $trimmed = trim((string) $value);
+                $filters[$key] = $trimmed !== '' ? $trimmed : null;
+            } else {
+                $filters[$key] = null;
+            }
+        }
+
+        return $filters;
     }
 
     private function handleStaffWorkflowUpdate(
@@ -519,8 +561,8 @@ class TicketController extends Controller
             'status' => ['sometimes', 'required', Rule::in(self::ALL_STATUSES)],
             'priority' => ['sometimes', 'required', 'in:low,medium,high,critical'],
             'target_due_date' => ['sometimes', 'nullable', 'date'],
-            'review_decision_notes' => ['sometimes', 'nullable', 'string'],
-            'resolution_summary' => ['sometimes', 'nullable', 'string'],
+            'review_decision_notes' => ['sometimes', 'nullable', 'string', 'max:10000'],
+            'resolution_summary' => ['sometimes', 'nullable', 'string', 'max:10000'],
         ]);
 
         $changes = [];
@@ -648,7 +690,7 @@ class TicketController extends Controller
     ): RedirectResponse {
         $validated = $request->validate([
             'action' => ['required', 'in:confirm_close,reopen,cancel'],
-            'reopen_reason' => ['nullable', 'string'],
+            'reopen_reason' => ['nullable', 'string', 'max:5000'],
         ]);
 
         $ticket->loadMissing(['leadEngineer', 'collaborators']);
@@ -851,6 +893,7 @@ class TicketController extends Controller
         return User::query()
             ->where('is_active', true)
             ->where('role', User::ROLE_ENGINEER)
+            ->orderByRaw('LOWER(name) ASC')
             ->orderBy('name')
             ->get(['id', 'name', 'username', 'role', 'job_title']);
     }

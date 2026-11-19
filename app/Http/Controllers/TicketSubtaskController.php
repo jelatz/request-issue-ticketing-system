@@ -100,6 +100,7 @@ class TicketSubtaskController extends Controller
         $title = $subtask->title;
         $subtask->delete();
 
+        $ticketService->markFirstResponseIfNeeded($ticket, $user);
         $ticketService->recordActivity(
             $ticket,
             $user,

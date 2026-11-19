@@ -276,12 +276,14 @@ function toggleSystemActive(system) {
             <form novalidate class="space-y-4" @submit.prevent="submitCreate">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-system-name" class="block text-xs font-medium text-slate-700 mb-1">
                             System name
                         </label>
                         <input
+                            id="create-system-name"
                             v-model="createForm.name"
                             type="text"
+                            maxlength="255"
                             required
                             placeholder="e.g. CallTek Core CRM"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
@@ -298,12 +300,14 @@ function toggleSystemActive(system) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="create-system-category" class="block text-xs font-medium text-slate-700 mb-1">
                             Category
                         </label>
                         <input
+                            id="create-system-category"
                             v-model="createForm.category"
                             type="text"
+                            maxlength="255"
                             placeholder="e.g. Operations Platform"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -320,10 +324,11 @@ function toggleSystemActive(system) {
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium text-slate-700 mb-1">
+                    <label for="create-system-description" class="block text-xs font-medium text-slate-700 mb-1">
                         Description
                     </label>
                     <textarea
+                        id="create-system-description"
                         v-model="createForm.description"
                         rows="3"
                         placeholder="Scope of this internal system, key workflows, and routing notes..."
@@ -341,8 +346,9 @@ function toggleSystemActive(system) {
                 </div>
 
                 <div class="pt-1">
-                    <label class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                    <label for="create-system-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                         <input
+                            id="create-system-active"
                             v-model="createForm.is_active"
                             type="checkbox"
                             class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
@@ -383,12 +389,14 @@ function toggleSystemActive(system) {
             <form novalidate class="space-y-4" @submit.prevent="submitEdit">
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-system-name" class="block text-xs font-medium text-slate-700 mb-1">
                             System name
                         </label>
                         <input
+                            id="edit-system-name"
                             v-model="editForm.name"
                             type="text"
+                            maxlength="255"
                             required
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
@@ -404,12 +412,14 @@ function toggleSystemActive(system) {
                     </div>
 
                     <div>
-                        <label class="block text-xs font-medium text-slate-700 mb-1">
+                        <label for="edit-system-category" class="block text-xs font-medium text-slate-700 mb-1">
                             Category
                         </label>
                         <input
+                            id="edit-system-category"
                             v-model="editForm.category"
                             type="text"
+                            maxlength="255"
                             class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
                             :class="
                                 editForm.errors.category
@@ -425,10 +435,11 @@ function toggleSystemActive(system) {
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium text-slate-700 mb-1">
+                    <label for="edit-system-description" class="block text-xs font-medium text-slate-700 mb-1">
                         Description
                     </label>
                     <textarea
+                        id="edit-system-description"
                         v-model="editForm.description"
                         rows="3"
                         class="w-full rounded-md border px-3 py-1.5 text-sm text-slate-900 focus:outline-none focus:ring-1"
@@ -445,8 +456,9 @@ function toggleSystemActive(system) {
                 </div>
 
                 <div class="pt-1">
-                    <label class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                    <label for="edit-system-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
                         <input
+                            id="edit-system-active"
                             v-model="editForm.is_active"
                             type="checkbox"
                             class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"

@@ -44,19 +44,13 @@ For local development with concurrent servers, run:
 composer run dev
 ```
 
-## Seeded Demo Accounts
+## Seeded Accounts
 
-All seeded accounts from `database/seeders/DatabaseSeeder.php` use the password `password`.
+The default account seeded by `database/seeders/DatabaseSeeder.php` uses the password `password`.
 
 | Role | Username | Email | Department |
 | --- | --- | --- | --- |
 | Superadmin | `superadmin` | `superadmin@calltek.local` | IT Leadership |
-| Engineer | `engineer1` | `engineer1@calltek.local` | Platform Engineering |
-| Engineer | `engineer2` | `engineer2@calltek.local` | Network Engineering |
-| Engineer | `engineer3` | `engineer3@calltek.local` | Application Development |
-| Requester | `user1` | `user1@calltek.local` | Technical Support Operations |
-| Requester | `user2` | `user2@calltek.local` | Finance & Billing |
-| Requester | `user3` | `user3@calltek.local` | Network Operations Center |
 
 ## Testing & Build Commands
 

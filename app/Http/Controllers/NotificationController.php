@@ -38,8 +38,21 @@ class NotificationController extends Controller
             ]);
         }
 
-        if ($request->boolean('redirect') && $notification->action_url) {
-            return redirect($notification->action_url);
+        if ($request->boolean('redirect')) {
+            $actionUrl = $notification->action_url;
+            if (is_string($actionUrl) && $actionUrl !== '') {
+                $appUrl = rtrim((string) config('app.url'), '/');
+                $isInternalPath = str_starts_with($actionUrl, '/') && !str_starts_with($actionUrl, '//');
+                $isSameOriginUrl = $appUrl !== '' && str_starts_with($actionUrl, $appUrl . '/');
+
+                if ($isInternalPath || $isSameOriginUrl) {
+                    return redirect($actionUrl);
+                }
+            }
+
+            if ($notification->ticket_id) {
+                return redirect()->route('tickets.show', $notification->ticket_id);
+            }
         }
 
         return back()->with('success', 'Notification marked as read.');

@@ -76,6 +76,7 @@ class HandleInertiaRequests extends Middleware
             'internalSystems' => fn () => $user
                 ? InternalSystem::query()
                     ->where('is_active', true)
+                    ->orderByRaw('LOWER(name) ASC')
                     ->orderBy('name')
                     ->get(['id', 'name'])
                 : [],

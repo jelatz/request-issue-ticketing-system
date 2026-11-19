@@ -10,6 +10,7 @@ use App\Services\NotificationService;
 use App\Services\TicketService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class TicketCommentController extends Controller
 {
@@ -26,7 +27,7 @@ class TicketCommentController extends Controller
         }
 
         $validated = $request->validate([
-            'body' => ['required', 'string'],
+            'body' => ['required', 'string', 'max:10000'],
             'is_internal' => ['sometimes', 'boolean'],
             'attachments' => ['nullable', 'array'],
             'attachments.*' => ['file', 'max:10240'],
@@ -35,27 +36,31 @@ class TicketCommentController extends Controller
         $isInternal = $user->isStaff() ? $request->boolean('is_internal') : false;
 
         try {
-            $comment = TicketComment::create([
-                'ticket_id' => $ticket->id,
-                'user_id' => $user->id,
-                'body' => $validated['body'],
-                'is_internal' => $isInternal,
-            ]);
-
-            foreach ($request->file('attachments', []) as $file) {
-                $storedPath = $file->store("tickets/{$ticket->id}/comments/{$comment->id}", 'public');
-
-                TicketAttachment::create([
+            $comment = DB::transaction(function () use ($ticket, $user, $validated, $isInternal, $request): TicketComment {
+                $comment = TicketComment::create([
                     'ticket_id' => $ticket->id,
-                    'ticket_comment_id' => $comment->id,
-                    'uploaded_by_id' => $user->id,
-                    'original_name' => $file->getClientOriginalName(),
-                    'file_path' => $storedPath,
-                    'mime_type' => $file->getClientMimeType(),
-                    'file_size' => $file->getSize() ?? 0,
+                    'user_id' => $user->id,
+                    'body' => $validated['body'],
                     'is_internal' => $isInternal,
                 ]);
-            }
+
+                foreach ($request->file('attachments', []) as $file) {
+                    $storedPath = $file->store("tickets/{$ticket->id}/comments/{$comment->id}", 'public');
+
+                    TicketAttachment::create([
+                        'ticket_id' => $ticket->id,
+                        'ticket_comment_id' => $comment->id,
+                        'uploaded_by_id' => $user->id,
+                        'original_name' => $file->getClientOriginalName(),
+                        'file_path' => $storedPath,
+                        'mime_type' => $file->getClientMimeType(),
+                        'file_size' => $file->getSize() ?? 0,
+                        'is_internal' => $isInternal,
+                    ]);
+                }
+
+                return $comment;
+            });
 
             if ($user->isStaff()) {
                 $ticketService->markFirstResponseIfNeeded($ticket, $user);

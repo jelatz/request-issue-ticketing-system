@@ -45,7 +45,7 @@ class ReportController extends Controller
             'by_engineer' => $reportData['by_engineer'],
             'by_department' => $reportData['by_department'],
             'filters' => $request->only(['date_from', 'date_to', 'type', 'internal_system_id']),
-            'systems' => InternalSystem::query()->orderBy('name')->get(['id', 'name']),
+            'systems' => InternalSystem::query()->orderByRaw('LOWER(name) ASC')->orderBy('name')->get(['id', 'name']),
         ]);
     }
 
@@ -150,6 +150,17 @@ class ReportController extends Controller
      */
     private function buildReportData(Request $request): array
     {
+        $request->validate([
+            'date_from' => ['nullable', 'date_format:Y-m-d'],
+            'date_to' => array_values(array_filter([
+                'nullable',
+                'date_format:Y-m-d',
+                $request->filled('date_from') ? 'after_or_equal:date_from' : null,
+            ])),
+            'type' => ['nullable', 'in:issue,engineering_request'],
+            'internal_system_id' => ['nullable', 'integer', 'exists:internal_systems,id'],
+        ]);
+
         $query = Ticket::visibleTo($request->user())
             ->with(['internalSystem', 'requester', 'leadEngineer', 'collaborators']);
 
@@ -215,7 +226,7 @@ class ReportController extends Controller
             'overdue_count' => $overdueCount,
         ];
 
-        $systemsQuery = InternalSystem::query()->orderBy('name');
+        $systemsQuery = InternalSystem::query()->orderByRaw('LOWER(name) ASC')->orderBy('name');
         if ($systemId) {
             $systemsQuery->whereKey($systemId);
         }

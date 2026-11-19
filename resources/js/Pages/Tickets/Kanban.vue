@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onUnmounted, reactive, ref } from 'vue';
+import { computed, onUnmounted, reactive, ref, watch } from 'vue';
 import { Head, Link, router, usePage } from '@inertiajs/vue3';
 import AppLayout from '../../Layouts/AppLayout.vue';
 import PriorityBadge from '../../Components/PriorityBadge.vue';
@@ -67,6 +67,20 @@ const filterForm = reactive({
     lead_engineer_id: props.filters.lead_engineer_id ? String(props.filters.lead_engineer_id) : '',
     scope: props.filters.scope || '',
 });
+
+watch(
+    () => props.filters,
+    (nextFilters) => {
+        const next = nextFilters || {};
+        filterForm.search = next.search || '';
+        filterForm.type = next.type || '';
+        filterForm.priority = next.priority || '';
+        filterForm.internal_system_id = next.internal_system_id ? String(next.internal_system_id) : '';
+        filterForm.lead_engineer_id = next.lead_engineer_id ? String(next.lead_engineer_id) : '';
+        filterForm.scope = next.scope || '';
+    },
+    { deep: true }
+);
 
 const showClosedRejected = ref(false);
 const draggedTicket = ref(null);
@@ -374,8 +388,12 @@ onUnmounted(() => {
                     </button>
                 </div>
 
-                <label class="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none shrink-0">
+                <label
+                    for="kanban-show-closed-rejected"
+                    class="inline-flex items-center gap-2 text-xs text-slate-600 cursor-pointer select-none shrink-0"
+                >
                     <input
+                        id="kanban-show-closed-rejected"
                         v-model="showClosedRejected"
                         type="checkbox"
                         class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"

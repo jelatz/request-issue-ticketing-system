@@ -426,6 +426,7 @@ defineExpose({
                         id="reopen_reason"
                         v-model="reopenReason"
                         type="text"
+                        maxlength="5000"
                         placeholder="Explain what is still failing or missing..."
                         class="flex-1 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
                     />
@@ -581,14 +582,19 @@ defineExpose({
                         class="flex flex-col sm:flex-row gap-2"
                         @submit.prevent="addSubtask"
                     >
+                        <label for="subtask-title" class="sr-only">Subtask title</label>
                         <input
+                            id="subtask-title"
                             v-model="subtaskForm.title"
                             type="text"
+                            maxlength="255"
                             required
                             placeholder="Add subtask or verification step..."
                             class="flex-1 px-3 py-1.5 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
                         />
+                        <label for="subtask-assigned-engineer" class="sr-only">Assigned engineer</label>
                         <select
+                            id="subtask-assigned-engineer"
                             v-model="subtaskForm.assigned_engineer_id"
                             class="sm:w-44 px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
                         >
@@ -659,9 +665,11 @@ defineExpose({
 
                 <!-- 4. Discussion & Audit Log Card -->
                 <section class="bg-white border border-slate-200 rounded-lg overflow-hidden">
-                    <div class="px-5 border-b border-slate-200 flex items-center gap-6">
+                    <div role="tablist" class="px-5 border-b border-slate-200 flex items-center gap-6">
                         <button
                             type="button"
+                            role="tab"
+                            :aria-selected="activeActivityTab === 'comments'"
                             class="py-3 text-xs border-b-2 transition-colors"
                             :class="
                                 activeActivityTab === 'comments'
@@ -674,6 +682,8 @@ defineExpose({
                         </button>
                         <button
                             type="button"
+                            role="tab"
+                            :aria-selected="activeActivityTab === 'audit'"
                             class="py-3 text-xs border-b-2 transition-colors"
                             :class="
                                 activeActivityTab === 'audit'
@@ -763,6 +773,7 @@ defineExpose({
                                     id="comment-body"
                                     v-model="commentForm.body"
                                     rows="3"
+                                    maxlength="10000"
                                     required
                                     :placeholder="
                                         commentForm.is_internal
@@ -813,9 +824,10 @@ defineExpose({
 
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
                                 <div class="flex flex-wrap items-center gap-4">
-                                    <label class="inline-flex items-center px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-md cursor-pointer transition-colors">
+                                    <label for="comment-attachments" class="inline-flex items-center px-2.5 py-1 text-xs font-medium text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-md cursor-pointer transition-colors">
                                         <span>Attach files</span>
                                         <input
+                                            id="comment-attachments"
                                             type="file"
                                             multiple
                                             class="hidden"
@@ -825,9 +837,11 @@ defineExpose({
 
                                     <label
                                         v-if="permissions.can_post_internal_note"
+                                        for="comment-is-internal"
                                         class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer"
                                     >
                                         <input
+                                            id="comment-is-internal"
                                             v-model="commentForm.is_internal"
                                             type="checkbox"
                                             class="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
@@ -975,6 +989,7 @@ defineExpose({
                                 id="wf-review"
                                 v-model="workflowForm.review_decision_notes"
                                 rows="2"
+                                maxlength="10000"
                                 placeholder="Approval rationale, feasibility notes, or rejection reason..."
                                 class="w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
                             />
@@ -991,6 +1006,7 @@ defineExpose({
                                 id="wf-resolution"
                                 v-model="workflowForm.resolution_summary"
                                 rows="3"
+                                maxlength="10000"
                                 placeholder="Document root cause, fix, and verification outcome..."
                                 class="w-full px-2.5 py-1.5 text-sm bg-white border border-slate-200 rounded-md focus:outline-none focus:border-blue-500"
                             />

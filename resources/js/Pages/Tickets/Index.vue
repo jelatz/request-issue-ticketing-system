@@ -101,8 +101,9 @@ onBeforeUnmount(() => {
 function buildQueryParams() {
     const params = {};
     for (const [key, value] of Object.entries(filterForm)) {
-        if (value !== '' && value !== null && value !== undefined) {
-            params[key] = value;
+        const normalized = typeof value === 'string' ? value.trim() : value;
+        if (normalized !== '' && normalized !== null && normalized !== undefined) {
+            params[key] = normalized;
         }
     }
     return params;
@@ -122,6 +123,14 @@ function onSearchInput() {
     searchTimer = setTimeout(() => {
         applyFilters();
     }, 300);
+}
+
+function onSearchEscape() {
+    clearSearchTimer();
+    if (filterForm.search !== '') {
+        filterForm.search = '';
+        applyFilters();
+    }
 }
 
 function selectStatusTab(statusKey) {
@@ -196,11 +205,13 @@ function collaboratorTooltip(ticket) {
             <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
                 <!-- Status Tabs -->
                 <div class="border-b border-slate-200 px-4 overflow-x-auto">
-                    <div class="flex items-center gap-5 min-w-max">
+                    <div role="tablist" aria-label="Filter tickets by status" class="flex items-center gap-5 min-w-max">
                         <button
                             v-for="tab in statusTabs"
                             :key="tab.countKey"
                             type="button"
+                            role="tab"
+                            :aria-selected="(filterForm.status || '') === tab.key"
                             class="py-2.5 text-xs font-medium border-b-2 -mb-px transition-colors inline-flex items-center gap-1.5 whitespace-nowrap"
                             :class="
                                 (filterForm.status || '') === tab.key
@@ -230,16 +241,20 @@ function collaboratorTooltip(ticket) {
                     @submit.prevent="applyFilters"
                 >
                     <div class="flex flex-wrap items-center gap-2">
+                        <label for="filter-search" class="sr-only">Search tickets</label>
                         <input
                             id="filter-search"
                             v-model="filterForm.search"
                             type="text"
+                            maxlength="255"
                             aria-label="Search tickets"
                             placeholder="Search key, title, or keyword..."
                             class="w-full sm:w-56 lg:w-64 px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md text-slate-800 placeholder:text-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                             @input="onSearchInput"
+                            @keydown.escape="onSearchEscape"
                         />
 
+                        <label for="filter-type" class="sr-only">Filter by ticket type</label>
                         <select
                             id="filter-type"
                             v-model="filterForm.type"
@@ -252,6 +267,7 @@ function collaboratorTooltip(ticket) {
                             <option value="engineering_request">Engineering Request</option>
                         </select>
 
+                        <label for="filter-priority" class="sr-only">Filter by priority</label>
                         <select
                             id="filter-priority"
                             v-model="filterForm.priority"
@@ -266,6 +282,7 @@ function collaboratorTooltip(ticket) {
                             <option value="low">Low</option>
                         </select>
 
+                        <label for="filter-system" class="sr-only">Filter by internal system</label>
                         <select
                             id="filter-system"
                             v-model="filterForm.internal_system_id"
@@ -279,6 +296,7 @@ function collaboratorTooltip(ticket) {
                             </option>
                         </select>
 
+                        <label v-if="user?.is_super_admin" for="filter-lead" class="sr-only">Filter by lead engineer</label>
                         <select
                             v-if="user?.is_super_admin"
                             id="filter-lead"
@@ -294,6 +312,7 @@ function collaboratorTooltip(ticket) {
                             </option>
                         </select>
 
+                        <label for="filter-scope" class="sr-only">Filter by scope</label>
                         <select
                             id="filter-scope"
                             v-model="filterForm.scope"
