@@ -1,4 +1,5 @@
 export const STATUS_LABELS = {
+    pending_approval: 'Pending Approval',
     open: 'Open',
     under_review: 'Under Review',
     in_progress: 'In Progress',

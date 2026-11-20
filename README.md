@@ -44,6 +44,46 @@ For local development with concurrent servers, run:
 composer run dev
 ```
 
+### Queue Worker
+
+Email notifications (`TicketNotificationMail`) are dispatched to the queue. Locally, `composer run dev` (`php artisan dev`) automatically runs a local queue listener (`queue:listen`).
+
+In production, run a dedicated queue worker process:
+
+```bash
+php artisan queue:work --tries=3 --max-time=3600
+```
+
+### Browser Push Notifications (Web Push / VAPID)
+
+CallTek Desk supports browser desktop push notifications using the Web Push API and VAPID keys.
+
+1. Generate a VAPID key pair:
+
+```bash
+php artisan webpush:vapid
+```
+
+On Windows, if PHP reports an OpenSSL configuration error when generating keys, set `OPENSSL_CONF` to PHP's `extras\ssl\openssl.cnf` first:
+
+```powershell
+$env:OPENSSL_CONF="C:\path\to\php\extras\ssl\openssl.cnf"
+php artisan webpush:vapid
+```
+
+2. Ensure the following variables are configured in `.env`:
+
+```env
+VAPID_PUBLIC_KEY=
+VAPID_PRIVATE_KEY=
+VAPID_SUBJECT=mailto:notifications@calltek.local
+```
+
+3. Requirements:
+- **Secure Context:** Browser Push API requires HTTPS in production (`http://localhost` is allowed for local development).
+- **Network Access:** The application server must have outbound HTTPS access to browser push endpoints (such as `fcm.googleapis.com`, Mozilla autopush, and Apple push services).
+- **Queue Worker:** Push notifications are delivered through Laravel's queue system when queued, so keep a queue worker running alongside the web server.
+
 ## Seeded Accounts
 
 The default account seeded by `database/seeders/DatabaseSeeder.php` uses the password `password`.

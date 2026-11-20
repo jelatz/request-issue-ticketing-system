@@ -19,6 +19,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Route;
@@ -92,7 +93,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_requester_can_submit_issue_and_engineering_request_with_attachments(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $superadmin = User::factory()->create([
             'role' => User::ROLE_SUPERADMIN,
@@ -142,7 +143,7 @@ class TicketingBackendTest extends TestCase
         $this->assertNull($issue->expected_behavior);
         $this->assertNull($issue->actual_behavior);
         $this->assertCount(1, $issue->attachments);
-        Storage::disk('public')->assertExists($issue->attachments->first()->file_path);
+        Storage::disk((string) config('filesystems.attachments_disk'))->assertExists($issue->attachments->first()->file_path);
 
         // Notifications sent to active superadmins only (not engineers or requester)
         $this->assertDatabaseHas('user_notifications', [
@@ -176,11 +177,13 @@ class TicketingBackendTest extends TestCase
 
         $engRequest = Ticket::where('type', Ticket::TYPE_ENGINEERING_REQUEST)->firstOrFail();
         $requestResponse->assertRedirect(route('tickets.show', $engRequest))
-            ->assertSessionHas('success', "Ticket {$engRequest->ticket_number} created successfully.");
+            ->assertSessionHas('success', "Ticket {$engRequest->ticket_number} submitted and is pending director approval.");
         $this->assertSame("REQ-{$year}-0001", $engRequest->ticket_number);
+        $this->assertSame(Ticket::STATUS_PENDING_APPROVAL, $engRequest->status);
+        $this->assertSame(Ticket::APPROVAL_STATUS_PENDING, $engRequest->approval_status);
         $this->assertNull($engRequest->lead_engineer_id);
         $this->assertCount(1, $engRequest->attachments);
-        Storage::disk('public')->assertExists($engRequest->attachments->first()->file_path);
+        Storage::disk((string) config('filesystems.attachments_disk'))->assertExists($engRequest->attachments->first()->file_path);
     }
 
     public function test_ticket_visibility_isolation_between_standard_users_and_staff(): void
@@ -215,7 +218,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_internal_notes_and_internal_attachments_are_hidden_from_standard_users(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $leadEngineer = User::factory()->create(['role' => User::ROLE_ENGINEER]);
         $collabEngineer = User::factory()->create(['role' => User::ROLE_ENGINEER]);
@@ -463,7 +466,7 @@ class TicketingBackendTest extends TestCase
                 ->where('by_priority.critical', 1)
                 ->has('by_engineer', 1)
                 ->where('by_engineer', fn ($rows) => collect($rows)->pluck('id')->contains($engineer->id)
-                    && !collect($rows)->pluck('id')->contains($superadmin->id))
+                    && ! collect($rows)->pluck('id')->contains($superadmin->id))
             );
 
         foreach (['tickets', 'systems', 'engineers', 'departments'] as $section) {
@@ -939,6 +942,7 @@ class TicketingBackendTest extends TestCase
                     'can_assign' => false,
                     'can_post_internal_note' => true,
                     'can_manage_subtasks' => true,
+                    'can_approve_request' => false,
                     'can_close_or_reopen' => true,
                     'can_cancel' => true,
                 ])
@@ -1154,9 +1158,9 @@ class TicketingBackendTest extends TestCase
                 $ids = collect($engineers)->pluck('id');
 
                 return $ids->contains($activeEngineer->id)
-                    && !$ids->contains($superadmin->id)
-                    && !$ids->contains($inactiveEngineer->id)
-                    && !$ids->contains($standardUser->id);
+                    && ! $ids->contains($superadmin->id)
+                    && ! $ids->contains($inactiveEngineer->id)
+                    && ! $ids->contains($standardUser->id);
             });
         };
 
@@ -1178,7 +1182,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_unassigned_engineer_is_forbidden_from_viewing_or_mutating_unassigned_tickets(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $unassignedEngineer = User::factory()->create(['role' => User::ROLE_ENGINEER]);
         $otherEngineer = User::factory()->create(['role' => User::ROLE_ENGINEER]);
@@ -1206,7 +1210,7 @@ class TicketingBackendTest extends TestCase
         ]);
 
         foreach ([$unassignedTicket, $otherAssignedTicket] as $ticket) {
-            Storage::disk('public')->put("tickets/{$ticket->id}/diag.txt", 'diagnostic log');
+            Storage::disk((string) config('filesystems.attachments_disk'))->put("tickets/{$ticket->id}/diag.txt", 'diagnostic log');
             $attachment = TicketAttachment::create([
                 'ticket_id' => $ticket->id,
                 'uploaded_by_id' => $requester->id,
@@ -1253,7 +1257,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_collaborating_engineer_retains_work_access_without_assignment_rights(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $superadmin = User::factory()->create(['role' => User::ROLE_SUPERADMIN]);
         $leadEngineer = User::factory()->create(['role' => User::ROLE_ENGINEER]);
@@ -1273,7 +1277,7 @@ class TicketingBackendTest extends TestCase
 
         $ticket->collaborators()->attach($collabEngineer->id, ['added_by_id' => $superadmin->id]);
 
-        Storage::disk('public')->put("tickets/{$ticket->id}/collab-log.txt", 'collab diagnostic');
+        Storage::disk((string) config('filesystems.attachments_disk'))->put("tickets/{$ticket->id}/collab-log.txt", 'collab diagnostic');
         $attachment = TicketAttachment::create([
             'ticket_id' => $ticket->id,
             'uploaded_by_id' => $requester->id,
@@ -1447,7 +1451,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_engineer_ticket_submission_redirects_to_index_when_unassigned(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $superadmin = User::factory()->create(['role' => User::ROLE_SUPERADMIN, 'is_active' => true]);
         $engineer = User::factory()->create(['role' => User::ROLE_ENGINEER, 'is_active' => true]);
@@ -2446,7 +2450,7 @@ class TicketingBackendTest extends TestCase
         $this->assertSame(1, Ticket::where('requester_id', $userA->id)->count());
 
         // TC-19: Non-polluting XSS + >255 title boundary probe & Dashboard literal escaping
-        $overlongXssTitle = '<script>window.__xss=1</script>' . str_repeat('A', 230);
+        $overlongXssTitle = '<script>window.__xss=1</script>'.str_repeat('A', 230);
         $this->actingAs($userA)
             ->post(route('tickets.store'), [
                 'type' => Ticket::TYPE_ISSUE,
@@ -3081,7 +3085,7 @@ class TicketingBackendTest extends TestCase
         $this->assertGuest();
 
         // Mid-session deactivation on POST /tickets logs out, flashes error, and creates no ticket
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
         $user2 = User::factory()->create([
             'username' => 'deactivated_poster',
             'password' => 'secret123',
@@ -3305,7 +3309,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_ticket_submission_happy_paths_all_roles_types_enums_multiple_attachments_and_superadmin_self_exclusion(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
         $year = now()->format('Y');
 
         // TC-01: Actors & System
@@ -3387,7 +3391,7 @@ class TicketingBackendTest extends TestCase
         $this->assertCount(1, $issueAttachments);
         $this->assertFalse((bool) $issueAttachments[0]->is_internal);
         $this->assertNull($issueAttachments[0]->ticket_comment_id);
-        Storage::disk('public')->assertExists($issueAttachments[0]->file_path);
+        Storage::disk((string) config('filesystems.attachments_disk'))->assertExists($issueAttachments[0]->file_path);
 
         $this->assertDatabaseHas('ticket_activities', [
             'ticket_id' => $issue->id,
@@ -3442,12 +3446,12 @@ class TicketingBackendTest extends TestCase
 
         $engReqResponse->assertStatus(302)
             ->assertRedirect(route('tickets.show', $engRequest))
-            ->assertSessionHas('success', "Ticket REQ-{$year}-0001 created successfully.");
+            ->assertSessionHas('success', "Ticket REQ-{$year}-0001 submitted and is pending director approval.");
 
         $this->assertSame("REQ-{$year}-0001", $engRequest->ticket_number);
         $this->assertSame('engineering_request', $engRequest->type);
         $this->assertSame('medium', $engRequest->priority);
-        $this->assertSame('open', $engRequest->status);
+        $this->assertSame(Ticket::STATUS_PENDING_APPROVAL, $engRequest->status);
         $this->assertSame('2026-12-15', $engRequest->requested_deadline?->toDateString());
         $this->assertNull($engRequest->environment);
         $this->assertNull($engRequest->impact_scope);
@@ -3455,7 +3459,7 @@ class TicketingBackendTest extends TestCase
         $engReqAttachments = TicketAttachment::where('ticket_id', $engRequest->id)->get();
         $this->assertCount(2, $engReqAttachments);
         foreach ($engReqAttachments as $att) {
-            Storage::disk('public')->assertExists($att->file_path);
+            Storage::disk((string) config('filesystems.attachments_disk'))->assertExists($att->file_path);
             $this->actingAs($requester)
                 ->get(route('attachments.download', $att))
                 ->assertOk();
@@ -3595,9 +3599,10 @@ class TicketingBackendTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->component('Tickets/Index')
-                ->has('tickets.data', 7)
+                ->has('tickets.data', 6)
                 ->where('statusCounts.all', 7)
-                ->where('statusCounts.open', 7)
+                ->where('statusCounts.open', 6)
+                ->where('statusCounts.pending_approval', 1)
             );
 
         $this->actingAs($superadminA)
@@ -3784,7 +3789,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_ticket_submission_length_limits_attachment_size_boundaries_cross_type_isolation_rbac_and_ui_a11y_security(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $requester = User::factory()->create([
             'name' => 'Standard Requester',
@@ -3991,7 +3996,7 @@ class TicketingBackendTest extends TestCase
         // TC-19: Non-polluting XSS/SQLi probe + raw Inertia rendering & Vue escaping check
         $this->actingAs($requester)->post(route('tickets.store'), [
             'type' => Ticket::TYPE_ENGINEERING_REQUEST,
-            'title' => '<script>window.__xss=1</script>' . str_repeat('A', 230),
+            'title' => '<script>window.__xss=1</script>'.str_repeat('A', 230),
             'description' => '<img src=x onerror=alert(1)>',
             'business_justification' => '<svg onload=alert(2)>',
             'proposed_functionality' => "'; DROP TABLE tickets; --",
@@ -4634,7 +4639,7 @@ class TicketingBackendTest extends TestCase
                 ->assertInertia(fn (Assert $page) => $page
                     ->has('tickets.data', 1)
                     ->where('tickets.data.0.id', $matchedId)
-                    ->where('tickets.data', fn ($rows) => !collect($rows)->pluck('id')->contains($excludedId))
+                    ->where('tickets.data', fn ($rows) => ! collect($rows)->pluck('id')->contains($excludedId))
                 );
         }
 
@@ -4979,13 +4984,13 @@ class TicketingBackendTest extends TestCase
                 ->where('systems', function ($systems): bool {
                     $names = collect($systems)->pluck('name')->values()->all();
 
-                    return !in_array('Legacy Decommissioned', $names, true)
+                    return ! in_array('Legacy Decommissioned', $names, true)
                         && $names === ['alpha gateway', 'Beta Ops', 'Zeta Core'];
                 })
                 ->where('engineers', function ($engineers): bool {
                     $names = collect($engineers)->pluck('name')->values()->all();
 
-                    return !in_array('Retired Engineer', $names, true)
+                    return ! in_array('Retired Engineer', $names, true)
                         && $names === ['alex rivera', 'Maya Lin', 'Zane Mercer'];
                 })
             );
@@ -5203,7 +5208,7 @@ class TicketingBackendTest extends TestCase
         // TC-21: Non-polluting XSS/SQLi probe & raw Inertia prop encoding
         $this->actingAs($requester)->post(route('tickets.store'), [
             'type' => Ticket::TYPE_ISSUE,
-            'title' => '<script>window.__queue_xss=1</script>' . str_repeat('A', 227),
+            'title' => '<script>window.__queue_xss=1</script>'.str_repeat('A', 227),
             'description' => 'XSS length overflow probe.',
             'priority' => Ticket::PRIORITY_HIGH,
             'environment' => 'production',
@@ -5435,7 +5440,7 @@ class TicketingBackendTest extends TestCase
                 ->where('columns', function ($columns) use ($cancelledTicket): bool {
                     $allIds = collect($columns)->flatten(1)->pluck('id')->all();
 
-                    return !in_array($cancelledTicket->id, $allIds, true);
+                    return ! in_array($cancelledTicket->id, $allIds, true);
                 })
             );
 
@@ -5463,10 +5468,10 @@ class TicketingBackendTest extends TestCase
                     ])->sort()->values()->all();
 
                     return $visibleIds === $expectedIds
-                        && !in_array($inProgressOther->id, $visibleIds, true)
-                        && !in_array($waitingUnassigned->id, $visibleIds, true)
-                        && !in_array($closedOther->id, $visibleIds, true)
-                        && !in_array($cancelledTicket->id, $visibleIds, true);
+                        && ! in_array($inProgressOther->id, $visibleIds, true)
+                        && ! in_array($waitingUnassigned->id, $visibleIds, true)
+                        && ! in_array($closedOther->id, $visibleIds, true)
+                        && ! in_array($cancelledTicket->id, $visibleIds, true);
                 })
             );
 
@@ -5686,7 +5691,7 @@ class TicketingBackendTest extends TestCase
                 ->where('systems', function ($systems) use ($inactiveSystem): bool {
                     $names = collect($systems)->pluck('name')->values()->all();
 
-                    return !in_array($inactiveSystem->name, $names, true)
+                    return ! in_array($inactiveSystem->name, $names, true)
                         && $names === ['alpha gateway', 'Zeta Core'];
                 })
                 ->where('columns', function ($columns) use ($openAssigned, $waitingUnassigned, $resolvedAssigned): bool {
@@ -5728,7 +5733,7 @@ class TicketingBackendTest extends TestCase
 
                     return in_array($openAssigned->id, $ids, true)
                         && in_array($underReviewCollab->id, $ids, true)
-                        && !in_array($inProgressOther->id, $ids, true);
+                        && ! in_array($inProgressOther->id, $ids, true);
                 })
             );
 
@@ -5759,7 +5764,7 @@ class TicketingBackendTest extends TestCase
                     $ids = collect($columns)->flatten(1)->pluck('id')->all();
 
                     return in_array($openAssigned->id, $ids, true)
-                        && !in_array($waitingUnassigned->id, $ids, true);
+                        && ! in_array($waitingUnassigned->id, $ids, true);
                 })
             );
 
@@ -5811,7 +5816,7 @@ class TicketingBackendTest extends TestCase
                     $ids = collect($columns)->flatten(1)->pluck('id')->all();
 
                     return in_array($openAssigned->id, $ids, true)
-                        && !in_array($underReviewCollab->id, $ids, true);
+                        && ! in_array($underReviewCollab->id, $ids, true);
                 })
             );
 
@@ -5823,7 +5828,7 @@ class TicketingBackendTest extends TestCase
                     $ids = collect($columns)->flatten(1)->pluck('id')->all();
 
                     return $ids === [$underReviewCollab->id]
-                        && !in_array($openAssigned->id, $ids, true);
+                        && ! in_array($openAssigned->id, $ids, true);
                 })
             );
 
@@ -5878,13 +5883,13 @@ class TicketingBackendTest extends TestCase
                     ])->sort()->values()->all();
 
                     return $ids === $expected
-                        && !in_array($inProgressOther->id, $ids, true) // due today
-                        && !in_array($waitingUnassigned->id, $ids, true) // due future
-                        && !in_array($sortLow->id, $ids, true) // due null
-                        && !in_array($resolvedAssigned->id, $ids, true)
-                        && !in_array($closedOther->id, $ids, true)
-                        && !in_array($rejectedAssigned->id, $ids, true)
-                        && !in_array($cancelledTicket->id, $ids, true);
+                        && ! in_array($inProgressOther->id, $ids, true) // due today
+                        && ! in_array($waitingUnassigned->id, $ids, true) // due future
+                        && ! in_array($sortLow->id, $ids, true) // due null
+                        && ! in_array($resolvedAssigned->id, $ids, true)
+                        && ! in_array($closedOther->id, $ids, true)
+                        && ! in_array($rejectedAssigned->id, $ids, true)
+                        && ! in_array($cancelledTicket->id, $ids, true);
                 })
             );
 
@@ -6005,7 +6010,7 @@ class TicketingBackendTest extends TestCase
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->where('columns.in_progress', fn ($cards): bool => collect($cards)->pluck('id')->contains($openAssigned->id))
-                ->where('columns.open', fn ($cards): bool => !collect($cards)->pluck('id')->contains($openAssigned->id))
+                ->where('columns.open', fn ($cards): bool => ! collect($cards)->pluck('id')->contains($openAssigned->id))
             );
 
         $this->actingAs($engineer)
@@ -6117,7 +6122,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_phase2_ticket_detail_workspace_triage_and_lifecycle_matrix(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $superadmin = User::factory()->create([
             'name' => 'Phase2 Superadmin',
@@ -6218,8 +6223,8 @@ class TicketingBackendTest extends TestCase
             'is_internal' => true,
         ]);
 
-        Storage::disk('public')->put('tickets/public-spec.txt', 'public content');
-        Storage::disk('public')->put('tickets/internal-debug.log', 'internal content');
+        Storage::disk((string) config('filesystems.attachments_disk'))->put('tickets/public-spec.txt', 'public content');
+        Storage::disk((string) config('filesystems.attachments_disk'))->put('tickets/internal-debug.log', 'internal content');
 
         $publicAttachment = TicketAttachment::create([
             'ticket_id' => $ticket->id,
@@ -6263,6 +6268,7 @@ class TicketingBackendTest extends TestCase
                     'can_assign' => true,
                     'can_post_internal_note' => true,
                     'can_manage_subtasks' => true,
+                    'can_approve_request' => false,
                     'can_close_or_reopen' => true,
                     'can_cancel' => true,
                 ])
@@ -6280,6 +6286,7 @@ class TicketingBackendTest extends TestCase
                         'can_assign' => false,
                         'can_post_internal_note' => true,
                         'can_manage_subtasks' => true,
+                        'can_approve_request' => false,
                         'can_close_or_reopen' => true,
                         'can_cancel' => true,
                     ])
@@ -6297,6 +6304,7 @@ class TicketingBackendTest extends TestCase
                     'can_assign' => false,
                     'can_post_internal_note' => false,
                     'can_manage_subtasks' => false,
+                    'can_approve_request' => false,
                     'can_close_or_reopen' => false,
                     'can_cancel' => true,
                 ])
@@ -6627,7 +6635,7 @@ class TicketingBackendTest extends TestCase
         // TC-12: Requester lifecycle action: confirm_close succeeds in resolved & waiting_on_user; fails in all other statuses
         foreach ([Ticket::STATUS_RESOLVED, Ticket::STATUS_WAITING_ON_USER] as $closeableStatus) {
             $closeTicket = Ticket::create([
-                'ticket_number' => 'ISS-2026-' . ($closeableStatus === Ticket::STATUS_RESOLVED ? '2010' : '2011'),
+                'ticket_number' => 'ISS-2026-'.($closeableStatus === Ticket::STATUS_RESOLVED ? '2010' : '2011'),
                 'type' => Ticket::TYPE_ISSUE,
                 'internal_system_id' => $system->id,
                 'requester_id' => $requester->id,
@@ -6673,7 +6681,7 @@ class TicketingBackendTest extends TestCase
             Ticket::STATUS_CANCELLED,
         ] as $idx => $invalidCloseStatus) {
             $blockedCloseTicket = Ticket::create([
-                'ticket_number' => 'ISS-2026-21' . str_pad((string) $idx, 2, '0', STR_PAD_LEFT),
+                'ticket_number' => 'ISS-2026-21'.str_pad((string) $idx, 2, '0', STR_PAD_LEFT),
                 'type' => Ticket::TYPE_ISSUE,
                 'requester_id' => $requester->id,
                 'title' => "Blocked close {$invalidCloseStatus}",
@@ -6762,7 +6770,7 @@ class TicketingBackendTest extends TestCase
             Ticket::STATUS_REJECTED,
         ] as $idx => $invalidReopenStatus) {
             $blockedReopenTicket = Ticket::create([
-                'ticket_number' => 'ISS-2026-22' . str_pad((string) $idx, 2, '0', STR_PAD_LEFT),
+                'ticket_number' => 'ISS-2026-22'.str_pad((string) $idx, 2, '0', STR_PAD_LEFT),
                 'type' => Ticket::TYPE_ISSUE,
                 'requester_id' => $requester->id,
                 'title' => "Blocked reopen {$invalidReopenStatus}",
@@ -6806,7 +6814,7 @@ class TicketingBackendTest extends TestCase
             Ticket::STATUS_CANCELLED,
         ] as $idx => $invalidCancelStatus) {
             $blockedCancelTicket = Ticket::create([
-                'ticket_number' => 'ISS-2026-23' . str_pad((string) $idx, 2, '0', STR_PAD_LEFT),
+                'ticket_number' => 'ISS-2026-23'.str_pad((string) $idx, 2, '0', STR_PAD_LEFT),
                 'type' => Ticket::TYPE_ISSUE,
                 'requester_id' => $requester->id,
                 'title' => "Blocked cancel {$invalidCancelStatus}",
@@ -6985,7 +6993,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_phase3_subtasks_discussion_internal_notes_and_audit_log_matrix(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $superadmin = User::factory()->create([
             'name' => 'Phase3 Superadmin',
@@ -7349,7 +7357,7 @@ class TicketingBackendTest extends TestCase
             $this->assertFalse($att->is_internal);
             $this->assertSame($ticket->id, $att->ticket_id);
             $this->assertSame($leadEngineer->id, $att->uploaded_by_id);
-            Storage::disk('public')->assertExists($att->file_path);
+            Storage::disk((string) config('filesystems.attachments_disk'))->assertExists($att->file_path);
         }
 
         $this->assertDatabaseHas('ticket_activities', [
@@ -7406,7 +7414,7 @@ class TicketingBackendTest extends TestCase
             ->where('ticket_comment_id', $internalComment->id)
             ->firstOrFail();
         $this->assertTrue($internalAttachment->is_internal);
-        Storage::disk('public')->assertExists($internalAttachment->file_path);
+        Storage::disk((string) config('filesystems.attachments_disk'))->assertExists($internalAttachment->file_path);
 
         $this->assertSame(
             $commentActivitiesBeforeInternal,
@@ -7688,7 +7696,7 @@ class TicketingBackendTest extends TestCase
 
         $this->assertSame(str_repeat('o', 250), $actA->old_value);
         $this->assertSame(str_repeat('n', 250), $actA->new_value);
-        $this->assertSame(str_repeat('x', 250) . '...', $actA->description);
+        $this->assertSame(str_repeat('x', 250).'...', $actA->description);
 
         $this->actingAs($leadEngineer)
             ->get(route('tickets.show', $auditTicket))
@@ -7887,7 +7895,7 @@ class TicketingBackendTest extends TestCase
 
     public function test_phase4_notifications_in_app_and_email_matrix(): void
     {
-        Storage::fake('public');
+        Storage::fake((string) config('filesystems.attachments_disk'));
 
         $superAdmin = User::factory()->create([
             'role' => User::ROLE_SUPERADMIN,
@@ -8042,7 +8050,7 @@ class TicketingBackendTest extends TestCase
             ->assertRedirect("/tickets/{$ticket->id}");
         $this->assertTrue($internalRedirectNotif->fresh()->is_read);
 
-        $sameOriginUrl = rtrim((string) config('app.url'), '/') . "/tickets/{$ticket->id}";
+        $sameOriginUrl = rtrim((string) config('app.url'), '/')."/tickets/{$ticket->id}";
         $sameOriginNotif = $requesterNotifications[23];
         $sameOriginNotif->update(['action_url' => $sameOriginUrl]);
         $this->actingAs($requester)
@@ -8180,7 +8188,7 @@ class TicketingBackendTest extends TestCase
             'is_read' => false,
         ]);
 
-        Mail::assertSent(TicketNotificationMail::class, function (TicketNotificationMail $mail) use ($requester, $directNotif): bool {
+        Mail::assertQueued(TicketNotificationMail::class, function (TicketNotificationMail $mail) use ($requester, $directNotif): bool {
             return $mail->hasTo($requester->email)
                 && $mail->envelope()->subject === $directNotif->title;
         });
@@ -8206,7 +8214,7 @@ class TicketingBackendTest extends TestCase
         ]);
         $this->assertSame(1, UserNotification::where('user_id', $leadEngineer->id)->where('title', 'Deduplicated Broadcast')->count());
         $this->assertSame(1, UserNotification::where('user_id', $collabEngineer->id)->where('title', 'Deduplicated Broadcast')->count());
-        Mail::assertSent(TicketNotificationMail::class, 2);
+        Mail::assertQueued(TicketNotificationMail::class, 2);
 
         // TC-15: Email transport failure resilience logs warning and still persists UserNotification
         Log::spy();
@@ -8810,6 +8818,7 @@ class TicketingBackendTest extends TestCase
                 ->where('summary.avg_resolution_hours', 2.3)
                 // TC-04: all 8 status counts & all 4 priority counts
                 ->where('by_status', [
+                    Ticket::STATUS_PENDING_APPROVAL => 0,
                     Ticket::STATUS_OPEN => 1,
                     Ticket::STATUS_UNDER_REVIEW => 1,
                     Ticket::STATUS_IN_PROGRESS => 1,
@@ -8937,6 +8946,7 @@ class TicketingBackendTest extends TestCase
                 ->where('by_system.0.system_name', 'Empty System')
                 ->where('by_system.0.total', 0)
                 ->where('by_status', [
+                    Ticket::STATUS_PENDING_APPROVAL => 0,
                     Ticket::STATUS_OPEN => 0,
                     Ticket::STATUS_UNDER_REVIEW => 0,
                     Ticket::STATUS_IN_PROGRESS => 0,
@@ -8960,7 +8970,7 @@ class TicketingBackendTest extends TestCase
             ->get(route('reports.index', ['type' => Ticket::TYPE_ENGINEERING_REQUEST]))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('by_system', fn ($rows) => !collect($rows)->pluck('system_name')->contains('Unassigned / General'))
+                ->where('by_system', fn ($rows) => ! collect($rows)->pluck('system_name')->contains('Unassigned / General'))
             );
 
         // TC-08: Engineer visibility scoping vs Superadmin global view
@@ -9426,15 +9436,15 @@ class TicketingBackendTest extends TestCase
         $this->assertSame(User::ROLE_USER, $createdUser->role);
         $this->assertTrue($createdUser->is_active);
         $this->assertNotSame('PassPhrase1!', $createdUser->password);
-        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('PassPhrase1!', $createdUser->password));
+        $this->assertTrue(Hash::check('PassPhrase1!', $createdUser->password));
 
         $this->assertSame('eng.alpha@calltek.local', $createdEngineer->email);
         $this->assertSame(User::ROLE_ENGINEER, $createdEngineer->role);
-        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('EngPass2!', $createdEngineer->password));
+        $this->assertTrue(Hash::check('EngPass2!', $createdEngineer->password));
 
         $this->assertSame('admin.two@calltek.local', $createdAdmin->email);
         $this->assertSame(User::ROLE_SUPERADMIN, $createdAdmin->role);
-        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('AdminPass3!', $createdAdmin->password));
+        $this->assertTrue(Hash::check('AdminPass3!', $createdAdmin->password));
 
         // Created user can authenticate with normalized credentials
         Auth::logout();
@@ -9506,7 +9516,7 @@ class TicketingBackendTest extends TestCase
 
         $createdUser->refresh();
         $this->assertNotSame($originalHash, $createdUser->password);
-        $this->assertTrue(\Illuminate\Support\Facades\Hash::check('NewPass99!', $createdUser->password));
+        $this->assertTrue(Hash::check('NewPass99!', $createdUser->password));
 
         Auth::logout();
         $this->post(route('login.store'), [
@@ -9640,8 +9650,8 @@ class TicketingBackendTest extends TestCase
         // TC-06: User field length boundaries (255 pass / 256 fail; email RFC max 254 pass / 256 fail)
         $str255 = str_repeat('a', 255);
         $str256 = str_repeat('a', 256);
-        $email254 = str_repeat('e', 64) . '@' . str_repeat('b', 50) . '.' . str_repeat('c', 50) . '.' . str_repeat('d', 50) . '.' . str_repeat('f', 32) . '.com';
-        $email256 = str_repeat('e', 64) . '@' . str_repeat('b', 50) . '.' . str_repeat('c', 50) . '.' . str_repeat('d', 50) . '.' . str_repeat('f', 34) . '.com';
+        $email254 = str_repeat('e', 64).'@'.str_repeat('b', 50).'.'.str_repeat('c', 50).'.'.str_repeat('d', 50).'.'.str_repeat('f', 32).'.com';
+        $email256 = str_repeat('e', 64).'@'.str_repeat('b', 50).'.'.str_repeat('c', 50).'.'.str_repeat('d', 50).'.'.str_repeat('f', 34).'.com';
         $this->assertSame(254, strlen($email254));
         $this->assertSame(256, strlen($email256));
 
@@ -10109,9 +10119,9 @@ class TicketingBackendTest extends TestCase
             ->get(route('tickets.index'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('internalSystems', fn ($items) => !collect($items)->pluck('id')->contains($billingSystem->id)
+                ->where('internalSystems', fn ($items) => ! collect($items)->pluck('id')->contains($billingSystem->id)
                     && collect($items)->pluck('id')->contains($alphaSystem->id))
-                ->where('systems', fn ($items) => !collect($items)->pluck('id')->contains($billingSystem->id)
+                ->where('systems', fn ($items) => ! collect($items)->pluck('id')->contains($billingSystem->id)
                     && collect($items)->pluck('id')->contains($alphaSystem->id))
             );
 
@@ -10119,7 +10129,7 @@ class TicketingBackendTest extends TestCase
             ->get(route('tickets.kanban'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
-                ->where('systems', fn ($items) => !collect($items)->pluck('id')->contains($billingSystem->id)
+                ->where('systems', fn ($items) => ! collect($items)->pluck('id')->contains($billingSystem->id)
                     && collect($items)->pluck('id')->contains($alphaSystem->id))
             );
 
@@ -10388,7 +10398,7 @@ class TicketingBackendTest extends TestCase
                 'updated_at' => Carbon::create(2026, 7, 1, 9, 0, 0)->addMinutes($seq),
             ];
 
-            $ticket = new Ticket();
+            $ticket = new Ticket;
             $ticket->forceFill(array_merge($defaults, $overrides));
             $ticket->save(['timestamps' => false]);
 
@@ -10457,6 +10467,7 @@ class TicketingBackendTest extends TestCase
                 ->where('tickets.data.1.id', $tieOlderId->id)
                 ->where('statusCounts', [
                     'all' => 17,
+                    'pending_approval' => 0,
                     'open' => 8,
                     'under_review' => 1,
                     'in_progress' => 3,
@@ -10759,7 +10770,7 @@ class TicketingBackendTest extends TestCase
         }
 
         $this->actingAs($superadmin)
-            ->get('/tickets?search=' . urlencode('ISS-2026-7102'))
+            ->get('/tickets?search='.urlencode('ISS-2026-7102'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->has('tickets.data', 1)
@@ -10767,7 +10778,7 @@ class TicketingBackendTest extends TestCase
             );
 
         $this->actingAs($superadmin)
-            ->get('/tickets?search=' . urlencode('Tie Breaker Lower ID'))
+            ->get('/tickets?search='.urlencode('Tie Breaker Lower ID'))
             ->assertOk()
             ->assertInertia(fn (Assert $page) => $page
                 ->has('tickets.data', 1)

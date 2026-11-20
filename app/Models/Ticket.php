@@ -8,27 +8,49 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Cache;
 
 class Ticket extends Model
 {
     use HasFactory;
 
     public const TYPE_ISSUE = 'issue';
+
     public const TYPE_ENGINEERING_REQUEST = 'engineering_request';
 
     public const PRIORITY_LOW = 'low';
+
     public const PRIORITY_MEDIUM = 'medium';
+
     public const PRIORITY_HIGH = 'high';
+
     public const PRIORITY_CRITICAL = 'critical';
 
     public const STATUS_OPEN = 'open';
+
+    public const STATUS_PENDING_APPROVAL = 'pending_approval';
+
     public const STATUS_UNDER_REVIEW = 'under_review';
+
     public const STATUS_IN_PROGRESS = 'in_progress';
+
     public const STATUS_WAITING_ON_USER = 'waiting_on_user';
+
     public const STATUS_RESOLVED = 'resolved';
+
     public const STATUS_CLOSED = 'closed';
+
     public const STATUS_REJECTED = 'rejected';
+
     public const STATUS_CANCELLED = 'cancelled';
+
+    public const APPROVAL_STATUS_PENDING = 'pending';
+
+    public const APPROVAL_STATUS_APPROVED = 'approved';
+
+    public const APPROVAL_STATUS_REJECTED = 'rejected';
+
+    public const PENDING_APPROVALS_CACHE_KEY = 'tickets.pending_approvals_count';
 
     /**
      * @var list<string>
@@ -43,6 +65,9 @@ class Ticket extends Model
         'description',
         'priority',
         'status',
+        'approval_status',
+        'approval_decided_by_id',
+        'approval_decided_at',
         'environment',
         'steps_to_reproduce',
         'expected_behavior',
@@ -66,12 +91,33 @@ class Ticket extends Model
     protected function casts(): array
     {
         return [
+            'approval_decided_at' => 'datetime',
             'requested_deadline' => 'date',
             'target_due_date' => 'date',
             'first_responded_at' => 'datetime',
             'resolved_at' => 'datetime',
             'closed_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::saved(function (): void {
+            Cache::forget(self::PENDING_APPROVALS_CACHE_KEY);
+        });
+
+        static::deleted(function (): void {
+            Cache::forget(self::PENDING_APPROVALS_CACHE_KEY);
+        });
+    }
+
+    public static function cachedPendingApprovalsCount(): int
+    {
+        return (int) Cache::rememberForever(self::PENDING_APPROVALS_CACHE_KEY, function (): int {
+            return self::query()
+                ->where('status', self::STATUS_PENDING_APPROVAL)
+                ->count();
+        });
     }
 
     /**
@@ -96,6 +142,14 @@ class Ticket extends Model
     public function leadEngineer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'lead_engineer_id');
+    }
+
+    /**
+     * @return BelongsTo<User, $this>
+     */
+    public function approvalDecidedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approval_decided_by_id');
     }
 
     /**
@@ -180,10 +234,20 @@ class Ticket extends Model
         return $user->isSuperAdmin() || ($user->isEngineer() && $this->isAssignedTo($user));
     }
 
+    public function isEngineeringRequest(): bool
+    {
+        return $this->type === self::TYPE_ENGINEERING_REQUEST;
+    }
+
+    public function isPendingApproval(): bool
+    {
+        return $this->status === self::STATUS_PENDING_APPROVAL;
+    }
+
     /**
      * Scope tickets visible to the given user based on their role.
      *
-     * @param Builder<Ticket> $query
+     * @param  Builder<Ticket>  $query
      * @return Builder<Ticket>
      */
     public function scopeVisibleTo(Builder $query, User $user): Builder
@@ -192,12 +256,15 @@ class Ticket extends Model
             return $query;
         }
 
-        $directColumn = $user->isEngineer() ? 'lead_engineer_id' : 'requester_id';
+        $directColumn = $this->qualifyColumn($user->isEngineer() ? 'lead_engineer_id' : 'requester_id');
 
         return $query->where(function (Builder $subQuery) use ($user, $directColumn): void {
             $subQuery->where($directColumn, $user->id)
                 ->orWhereHas('collaborators', function (Builder $collabQuery) use ($user): void {
                     $collabQuery->where('users.id', $user->id);
+                })
+                ->when($user->isDirector(), function (Builder $directorQuery): void {
+                    $directorQuery->orWhere($this->qualifyColumn('type'), self::TYPE_ENGINEERING_REQUEST);
                 });
         });
     }

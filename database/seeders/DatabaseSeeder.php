@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
                 'email' => 'superadmin@calltek.local',
                 'password' => Hash::make('password'),
                 'role' => User::ROLE_SUPERADMIN,
+                'is_director' => true,
                 'department' => 'IT Leadership',
                 'job_title' => 'Director of Engineering',
                 'is_active' => true,

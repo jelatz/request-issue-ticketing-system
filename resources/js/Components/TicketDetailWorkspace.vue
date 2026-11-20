@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { router, useForm, usePage } from '@inertiajs/vue3';
 import RoleBadge from './RoleBadge.vue';
+import { useFeedback } from '../composables/useFeedback';
 import {
     ENVIRONMENT_LABELS,
     IMPACT_SCOPE_LABELS,
@@ -31,6 +32,7 @@ const props = defineProps({
 const page = usePage();
 const user = computed(() => page.props.auth?.user || null);
 const pageErrors = computed(() => page.props.errors || {});
+const { notifyError } = useFeedback();
 
 const activeActivityTab = ref('comments');
 
@@ -146,14 +148,53 @@ const diagnosticRows = computed(() => {
 
 // Requester Verification Actions (for non-staff requester)
 const showRequesterBanner = computed(() => {
-    if (!user.value || user.value.is_staff) {
+    if (!user.value || user.value.is_staff || props.permissions?.can_approve_request) {
         return false;
     }
     if (props.ticket.requester_id !== user.value.id) {
         return false;
     }
-    return ['resolved', 'waiting_on_user', 'closed', 'open'].includes(props.ticket.status);
+    return ['pending_approval', 'resolved', 'waiting_on_user', 'closed', 'open'].includes(props.ticket.status);
 });
+
+const approvalForm = useForm({
+    decision: '',
+    decision_notes: '',
+});
+
+function submitApprovalDecision(decision) {
+    approvalForm.clearErrors();
+
+    if (decision === 'reject' && !String(approvalForm.decision_notes || '').trim()) {
+        const message = 'Please provide a reason for rejecting this engineering request.';
+        approvalForm.setError('decision_notes', message);
+        notifyError(message);
+        return;
+    }
+
+    approvalForm.decision = decision;
+    approvalForm.patch(`/tickets/${props.ticket.id}/approval`, {
+        preserveScroll: true,
+        onSuccess: () => {
+            approvalForm.reset();
+            approvalForm.clearErrors();
+        },
+        onError: (errors) => {
+            const firstError = Object.values(errors || {}).find((v) => typeof v === 'string' && v.length > 0);
+            if (firstError) {
+                notifyError(firstError);
+            }
+        },
+    });
+}
+
+const isAutoApproved = computed(
+    () =>
+        props.ticket.type === 'engineering_request' &&
+        props.ticket.approval_status === 'approved' &&
+        Boolean(props.ticket.approval_decided_by_id) &&
+        props.ticket.approval_decided_by_id === props.ticket.requester_id
+);
 
 const reopenReason = ref('');
 const showReopenInput = ref(false);
@@ -321,6 +362,8 @@ watch(
         activeActivityTab.value = 'comments';
         reopenReason.value = '';
         showReopenInput.value = false;
+        approvalForm.reset();
+        approvalForm.clearErrors();
         subtaskForm.reset();
         subtaskForm.clearErrors();
         commentForm.reset();
@@ -337,7 +380,7 @@ function saveWorkflow() {
     });
 }
 
-const workflowStatuses = Object.keys(STATUS_LABELS);
+const workflowStatuses = Object.keys(STATUS_LABELS).filter((status) => status !== 'pending_approval');
 const workflowPriorities = Object.keys(PRIORITY_LABELS);
 
 defineExpose({
@@ -360,6 +403,72 @@ defineExpose({
             </div>
         </div>
 
+        <!-- Director Approval Decision Card -->
+        <section
+            v-if="permissions.can_approve_request"
+            class="mb-6 bg-indigo-50/70 border border-indigo-200 rounded-lg p-4 space-y-3"
+        >
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div class="space-y-0.5">
+                    <div class="flex flex-wrap items-center gap-2">
+                        <h2 class="text-xs font-semibold text-indigo-950">
+                            Director approval required
+                        </h2>
+                        <span
+                            v-if="!user?.is_director"
+                            class="px-1.5 py-0.5 text-[11px] font-medium rounded border border-indigo-200 bg-white text-indigo-700"
+                        >
+                            Superadmin fallback
+                        </span>
+                    </div>
+                    <p class="text-xs text-slate-600">
+                        Review the justification, proposed functionality, and expected benefits before releasing this engineering request to the engineering triage queue.
+                    </p>
+                </div>
+            </div>
+
+            <div>
+                <label for="approval-decision-notes" class="block text-xs font-medium text-slate-700 mb-1">
+                    Decision notes (optional for approval, required for rejection)
+                </label>
+                <textarea
+                    id="approval-decision-notes"
+                    v-model="approvalForm.decision_notes"
+                    rows="2"
+                    maxlength="10000"
+                    placeholder="Document approval scope, sprint guidance, or reason for rejection..."
+                    class="w-full px-3 py-2 text-sm bg-white border rounded-md focus:outline-none"
+                    :class="approvalForm.errors.decision_notes ? 'border-rose-400 focus:border-rose-500' : 'border-slate-200 focus:border-indigo-500'"
+                    @input="approvalForm.clearErrors('decision_notes', 'decision')"
+                />
+                <p v-if="approvalForm.errors.decision_notes" class="mt-1 text-xs text-rose-600">
+                    {{ approvalForm.errors.decision_notes }}
+                </p>
+                <p v-if="approvalForm.errors.decision" class="mt-1 text-xs text-rose-600">
+                    {{ approvalForm.errors.decision }}
+                </p>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-end gap-2">
+                <button
+                    type="button"
+                    :disabled="approvalForm.processing"
+                    class="px-3.5 py-1.5 text-xs font-medium text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-60 rounded-md transition-colors"
+                    @click="submitApprovalDecision('reject')"
+                >
+                    {{ approvalForm.processing && approvalForm.decision === 'reject' ? 'Rejecting...' : 'Reject request' }}
+                </button>
+                <button
+                    type="button"
+                    :disabled="approvalForm.processing"
+                    class="px-3.5 py-1.5 text-xs font-medium text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 rounded-md transition-colors"
+                    @click="submitApprovalDecision('approve')"
+                >
+                    {{ approvalForm.processing && approvalForm.decision === 'approve' ? 'Approving...' : 'Approve request' }}
+                </button>
+            </div>
+        </section>
+
         <!-- Requester Verification / Action Banner -->
         <div
             v-if="showRequesterBanner"
@@ -378,6 +487,9 @@ defineExpose({
                     </p>
                     <p v-else-if="ticket.status === 'closed'" class="text-sm text-slate-700">
                         This ticket is closed. If the issue has recurred, you can reopen it for engineering review.
+                    </p>
+                    <p v-else-if="ticket.status === 'pending_approval'" class="text-sm text-slate-700">
+                        This engineering request is awaiting director approval before entering the engineering queue. You can cancel the request if it is no longer needed.
                     </p>
                     <p v-else-if="ticket.status === 'open'" class="text-sm text-slate-700">
                         This ticket has not entered active engineering work yet. You can cancel the request if it is no longer needed.
@@ -406,7 +518,7 @@ defineExpose({
                     </button>
 
                     <button
-                        v-if="ticket.status === 'open' && permissions.can_cancel"
+                        v-if="['open', 'pending_approval'].includes(ticket.status) && permissions.can_cancel"
                         type="button"
                         :disabled="requesterActionProcessing"
                         class="px-3 py-1.5 text-xs font-medium text-rose-700 bg-white hover:bg-rose-50 border border-rose-200 disabled:opacity-60 rounded-md transition-colors"
@@ -1031,7 +1143,14 @@ defineExpose({
                         Assignment
                     </h2>
 
-                    <form v-if="permissions.can_assign" novalidate class="space-y-3" @submit.prevent="saveAssignment">
+                    <div
+                        v-if="ticket.status === 'pending_approval'"
+                        class="rounded-md border border-indigo-200 bg-indigo-50/50 px-3 py-2.5 text-xs text-indigo-900"
+                    >
+                        Assignment is locked until a director approves this engineering request.
+                    </div>
+
+                    <form v-else-if="permissions.can_assign" novalidate class="space-y-3" @submit.prevent="saveAssignment">
                         <div
                             v-if="assignmentForm.hasErrors"
                             class="flex items-center gap-2 px-3 py-2 rounded-md bg-rose-50/80 border border-rose-200 text-rose-800 text-xs"
@@ -1143,6 +1262,38 @@ defineExpose({
                             <dd class="text-right text-slate-800">
                                 <span v-if="ticket.internal_system" class="font-medium text-slate-900">{{ ticket.internal_system.name }}</span>
                                 <span v-else class="text-slate-500">General / New system</span>
+                            </dd>
+                        </div>
+
+                        <div v-if="ticket.type === 'engineering_request'" class="flex items-start justify-between gap-3">
+                            <dt class="text-slate-500 shrink-0">Approval</dt>
+                            <dd class="text-right">
+                                <span v-if="ticket.status === 'pending_approval'" class="font-medium text-indigo-700">
+                                    Pending director approval
+                                </span>
+                                <template v-else-if="ticket.approval_status === 'approved'">
+                                    <div class="font-medium text-emerald-700">
+                                        Approved{{ isAutoApproved ? ' (Auto-approved)' : '' }}
+                                    </div>
+                                    <div v-if="ticket.approval_decided_by" class="text-[11px] text-slate-500">
+                                        by {{ ticket.approval_decided_by.name }}
+                                    </div>
+                                    <div v-if="ticket.approval_decided_at" class="text-[11px] text-slate-400 tabular-nums">
+                                        {{ formatDateTime(ticket.approval_decided_at) }}
+                                    </div>
+                                </template>
+                                <template v-else-if="ticket.approval_status === 'rejected'">
+                                    <div class="font-medium text-rose-700">
+                                        Rejected
+                                    </div>
+                                    <div v-if="ticket.approval_decided_by" class="text-[11px] text-slate-500">
+                                        by {{ ticket.approval_decided_by.name }}
+                                    </div>
+                                    <div v-if="ticket.approval_decided_at" class="text-[11px] text-slate-400 tabular-nums">
+                                        {{ formatDateTime(ticket.approval_decided_at) }}
+                                    </div>
+                                </template>
+                                <span v-else class="text-slate-400">—</span>
                             </dd>
                         </div>
 

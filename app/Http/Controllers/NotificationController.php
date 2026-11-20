@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\UserNotification;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -25,13 +26,35 @@ class NotificationController extends Controller
         ]);
     }
 
+    public function summary(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        $unreadCount = UserNotification::query()
+            ->where('user_id', $user->id)
+            ->where('is_read', false)
+            ->count();
+
+        $recentNotifications = UserNotification::query()
+            ->where('user_id', $user->id)
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->limit(8)
+            ->get(['id', 'ticket_id', 'title', 'message', 'action_url', 'is_read', 'created_at']);
+
+        return response()->json([
+            'unread_count' => $unreadCount,
+            'recent_notifications' => $recentNotifications,
+        ]);
+    }
+
     public function markRead(Request $request, UserNotification $notification): RedirectResponse
     {
         if ($notification->user_id !== $request->user()->id) {
             abort(403, 'You do not have permission to modify this notification.');
         }
 
-        if (!$notification->is_read) {
+        if (! $notification->is_read) {
             $notification->update([
                 'is_read' => true,
                 'read_at' => now(),
@@ -42,8 +65,8 @@ class NotificationController extends Controller
             $actionUrl = $notification->action_url;
             if (is_string($actionUrl) && $actionUrl !== '') {
                 $appUrl = rtrim((string) config('app.url'), '/');
-                $isInternalPath = str_starts_with($actionUrl, '/') && !str_starts_with($actionUrl, '//');
-                $isSameOriginUrl = $appUrl !== '' && str_starts_with($actionUrl, $appUrl . '/');
+                $isInternalPath = str_starts_with($actionUrl, '/') && ! str_starts_with($actionUrl, '//');
+                $isSameOriginUrl = $appUrl !== '' && str_starts_with($actionUrl, $appUrl.'/');
 
                 if ($isInternalPath || $isSameOriginUrl) {
                     return redirect($actionUrl);

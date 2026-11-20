@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\InternalSystem;
+use App\Models\Ticket;
 use App\Models\UserNotification;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
@@ -54,7 +55,10 @@ class HandleInertiaRequests extends Middleware
                     'is_super_admin' => $user->isSuperAdmin(),
                     'is_engineer' => $user->isEngineer(),
                     'is_staff' => $user->isStaff(),
+                    'is_director' => $user->isDirector(),
+                    'can_approve_requests' => $user->canApproveEngineeringRequests(),
                 ] : null,
+                'pending_approvals_count' => fn (): int => $user?->canApproveEngineeringRequests() ? Ticket::cachedPendingApprovalsCount() : 0,
                 'unread_notifications_count' => $user
                     ? UserNotification::where('user_id', $user->id)->where('is_read', false)->count()
                     : 0,
@@ -74,12 +78,11 @@ class HandleInertiaRequests extends Middleware
                 'error' => fn () => $request->session()->get('error'),
             ],
             'internalSystems' => fn () => $user
-                ? InternalSystem::query()
-                    ->where('is_active', true)
-                    ->orderByRaw('LOWER(name) ASC')
-                    ->orderBy('name')
-                    ->get(['id', 'name'])
+                ? InternalSystem::cachedActiveList()
                 : [],
+            'webpush' => fn (): array => [
+                'vapid_public_key' => $user ? (config('webpush.vapid.public_key') ?: null) : null,
+            ],
         ];
     }
 }

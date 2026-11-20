@@ -64,7 +64,7 @@ class TicketSubtaskController extends Controller
             abort(404);
         }
 
-        $nextCompleted = !$subtask->is_completed;
+        $nextCompleted = ! $subtask->is_completed;
 
         $subtask->update([
             'is_completed' => $nextCompleted,
@@ -76,7 +76,7 @@ class TicketSubtaskController extends Controller
             $ticket,
             $user,
             'subtask_toggled',
-            ($nextCompleted ? 'Completed' : 'Reopened') . " subtask: {$subtask->title}",
+            ($nextCompleted ? 'Completed' : 'Reopened')." subtask: {$subtask->title}",
             $nextCompleted ? 'pending' : 'completed',
             $nextCompleted ? 'completed' : 'pending'
         );
@@ -119,6 +119,12 @@ class TicketSubtaskController extends Controller
             $ticket->canBeWorkedOnBy($user),
             403,
             'You do not have permission to manage subtasks on this ticket.'
+        );
+
+        abort_if(
+            $ticket->isPendingApproval(),
+            403,
+            'Subtasks cannot be managed until this engineering request is approved.'
         );
     }
 }

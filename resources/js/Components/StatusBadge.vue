@@ -11,6 +11,7 @@ const props = defineProps({
 
 const containerClass = computed(() => {
     const map = {
+        pending_approval: 'border-indigo-200 bg-indigo-50/70 text-indigo-800',
         open: 'border-slate-200 bg-white text-slate-700',
         under_review: 'border-blue-200/80 bg-blue-50/50 text-blue-700',
         in_progress: 'border-blue-200 bg-blue-50/70 text-blue-700',
@@ -26,6 +27,7 @@ const containerClass = computed(() => {
 
 const dotClass = computed(() => {
     const map = {
+        pending_approval: 'bg-indigo-500',
         open: 'bg-slate-400',
         under_review: 'bg-blue-500',
         in_progress: 'bg-blue-600',

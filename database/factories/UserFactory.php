@@ -31,6 +31,7 @@ class UserFactory extends Factory
             'email_verified_at' => now(),
             'password' => static::$password ??= Hash::make('password'),
             'role' => User::ROLE_USER,
+            'is_director' => false,
             'department' => 'General Operations',
             'job_title' => 'Staff Member',
             'is_active' => true,
@@ -45,6 +46,16 @@ class UserFactory extends Factory
     {
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
+        ]);
+    }
+
+    /**
+     * Indicate that the user is a director.
+     */
+    public function director(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'is_director' => true,
         ]);
     }
 }

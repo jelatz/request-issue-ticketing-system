@@ -63,6 +63,7 @@ watch(
 
 const statusTabs = [
     { key: '', label: 'All', countKey: 'all' },
+    { key: 'pending_approval', label: 'Pending Approval', countKey: 'pending_approval' },
     { key: 'open', label: 'Open', countKey: 'open' },
     { key: 'under_review', label: 'Under Review', countKey: 'under_review' },
     { key: 'in_progress', label: 'In Progress', countKey: 'in_progress' },

@@ -42,6 +42,13 @@ class UserController extends Controller
             }
         }
 
+        if ($request->filled('is_director')) {
+            $isDirector = filter_var($request->input('is_director'), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            if ($isDirector !== null) {
+                $query->where('is_director', $isDirector);
+            }
+        }
+
         $users = $query
             ->orderBy('name')
             ->paginate(15)
@@ -49,7 +56,7 @@ class UserController extends Controller
 
         return Inertia::render('Admin/Users/Index', [
             'users' => $users,
-            'filters' => $request->only(['search', 'role', 'is_active']),
+            'filters' => $request->only(['search', 'role', 'is_active', 'is_director']),
         ]);
     }
 
@@ -59,12 +66,19 @@ class UserController extends Controller
 
         $validated = $request->validate($this->userValidationRules());
 
+        if ($validated['role'] === User::ROLE_ENGINEER && $request->boolean('is_director')) {
+            throw ValidationException::withMessages([
+                'is_director' => 'Engineer accounts cannot be assigned director approval permission.',
+            ]);
+        }
+
         $user = User::create([
             'name' => $validated['name'],
             'username' => $validated['username'],
             'email' => $validated['email'],
             'password' => $validated['password'],
             'role' => $validated['role'],
+            'is_director' => $validated['role'] === User::ROLE_ENGINEER ? false : $request->boolean('is_director'),
             'department' => $validated['department'] ?? null,
             'job_title' => $validated['job_title'] ?? null,
             'is_active' => $validated['is_active'] ?? true,
@@ -79,8 +93,14 @@ class UserController extends Controller
 
         $validated = $request->validate($this->userValidationRules($user));
 
+        if ($validated['role'] === User::ROLE_ENGINEER && $request->boolean('is_director')) {
+            throw ValidationException::withMessages([
+                'is_director' => 'Engineer accounts cannot be assigned director approval permission.',
+            ]);
+        }
+
         if ($user->id === $request->user()->id) {
-            if (!$request->boolean('is_active')) {
+            if (! $request->boolean('is_active')) {
                 throw ValidationException::withMessages([
                     'is_active' => 'You cannot deactivate your own Superadmin account.',
                 ]);
@@ -98,6 +118,7 @@ class UserController extends Controller
             'username' => $validated['username'],
             'email' => $validated['email'],
             'role' => $validated['role'],
+            'is_director' => $validated['role'] === User::ROLE_ENGINEER ? false : $request->boolean('is_director'),
             'department' => $validated['department'] ?? null,
             'job_title' => $validated['job_title'] ?? null,
             'is_active' => $request->boolean('is_active'),
@@ -140,6 +161,7 @@ class UserController extends Controller
                 $this->nonWhitespacePasswordRule(),
             ],
             'role' => ['required', 'in:superadmin,engineer,user'],
+            'is_director' => ['sometimes', 'boolean'],
             'department' => ['nullable', 'string', 'max:255'],
             'job_title' => ['nullable', 'string', 'max:255'],
             'is_active' => $existingUser ? ['required', 'boolean'] : ['boolean'],
@@ -180,7 +202,8 @@ class UserController extends Controller
 
     private function nonWhitespacePasswordRule(): ValidationRule
     {
-        return new class implements ValidationRule {
+        return new class implements ValidationRule
+        {
             public bool $implicit = true;
 
             public function validate(string $attribute, mixed $value, Closure $fail): void

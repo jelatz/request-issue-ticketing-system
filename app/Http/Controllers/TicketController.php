@@ -10,8 +10,10 @@ use App\Models\User;
 use App\Services\NotificationService;
 use App\Services\TicketService;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
@@ -36,6 +38,21 @@ class TicketController extends Controller
      * @var list<string>
      */
     private const ALL_STATUSES = [
+        Ticket::STATUS_PENDING_APPROVAL,
+        Ticket::STATUS_OPEN,
+        Ticket::STATUS_UNDER_REVIEW,
+        Ticket::STATUS_IN_PROGRESS,
+        Ticket::STATUS_WAITING_ON_USER,
+        Ticket::STATUS_RESOLVED,
+        Ticket::STATUS_CLOSED,
+        Ticket::STATUS_REJECTED,
+        Ticket::STATUS_CANCELLED,
+    ];
+
+    /**
+     * @var list<string>
+     */
+    private const STAFF_WORKFLOW_STATUSES = [
         Ticket::STATUS_OPEN,
         Ticket::STATUS_UNDER_REVIEW,
         Ticket::STATUS_IN_PROGRESS,
@@ -84,6 +101,10 @@ class TicketController extends Controller
             $count = (int) ($rawStatusCounts[$status] ?? 0);
             $statusCounts[$status] = $count;
             $statusCounts['all'] += $count;
+        }
+
+        if ($user->isSuperAdmin() || $user->isDirector()) {
+            Cache::forever(Ticket::PENDING_APPROVALS_CACHE_KEY, $statusCounts[Ticket::STATUS_PENDING_APPROVAL]);
         }
 
         return Inertia::render('Tickets/Index', [
@@ -197,8 +218,26 @@ class TicketController extends Controller
         $validated = $request->validate($rules);
         $user = $request->user();
 
+        $isEngineeringRequest = $validated['type'] === Ticket::TYPE_ENGINEERING_REQUEST;
+        $isAutoApproved = $isEngineeringRequest && $user->isDirector();
+        $initialStatus = ! $isEngineeringRequest
+            ? Ticket::STATUS_OPEN
+            : ($isAutoApproved ? Ticket::STATUS_OPEN : Ticket::STATUS_PENDING_APPROVAL);
+        $approvalStatus = ! $isEngineeringRequest
+            ? null
+            : ($isAutoApproved ? Ticket::APPROVAL_STATUS_APPROVED : Ticket::APPROVAL_STATUS_PENDING);
+
         try {
-            $ticket = DB::transaction(function () use ($validated, $user, $ticketService, $request): Ticket {
+            $ticket = DB::transaction(function () use (
+                $validated,
+                $user,
+                $ticketService,
+                $request,
+                $isEngineeringRequest,
+                $isAutoApproved,
+                $initialStatus,
+                $approvalStatus
+            ): Ticket {
                 $ticket = Ticket::create([
                     'ticket_number' => $ticketService->generateTicketNumber($validated['type']),
                     'type' => $validated['type'],
@@ -208,7 +247,10 @@ class TicketController extends Controller
                     'title' => $validated['title'],
                     'description' => $validated['description'],
                     'priority' => $validated['priority'],
-                    'status' => Ticket::STATUS_OPEN,
+                    'status' => $initialStatus,
+                    'approval_status' => $approvalStatus,
+                    'approval_decided_by_id' => $isAutoApproved ? $user->id : null,
+                    'approval_decided_at' => $isAutoApproved ? now() : null,
                     'environment' => $validated['environment'] ?? null,
                     'steps_to_reproduce' => null,
                     'expected_behavior' => null,
@@ -221,7 +263,7 @@ class TicketController extends Controller
                 ]);
 
                 foreach ($request->file('attachments', []) as $file) {
-                    $storedPath = $file->store("tickets/{$ticket->id}", 'public');
+                    $storedPath = $file->store("tickets/{$ticket->id}", (string) config('filesystems.attachments_disk'));
 
                     TicketAttachment::create([
                         'ticket_id' => $ticket->id,
@@ -235,39 +277,107 @@ class TicketController extends Controller
                     ]);
                 }
 
-                $ticketService->recordActivity(
-                    $ticket,
-                    $user,
-                    'ticket_created',
-                    "Ticket {$ticket->ticket_number} submitted by {$user->name}.",
-                    null,
-                    Ticket::STATUS_OPEN
-                );
+                if ($isEngineeringRequest && ! $isAutoApproved) {
+                    $ticketService->recordActivity(
+                        $ticket,
+                        $user,
+                        'ticket_created',
+                        "Engineering request {$ticket->ticket_number} submitted by {$user->name} (pending director approval).",
+                        null,
+                        Ticket::STATUS_PENDING_APPROVAL
+                    );
+                } else {
+                    $ticketService->recordActivity(
+                        $ticket,
+                        $user,
+                        'ticket_created',
+                        "Ticket {$ticket->ticket_number} submitted by {$user->name}.",
+                        null,
+                        Ticket::STATUS_OPEN
+                    );
+
+                    if ($isAutoApproved) {
+                        $ticketService->recordActivity(
+                            $ticket,
+                            $user,
+                            'request_auto_approved',
+                            "Engineering request auto-approved by Director {$user->name} and released to the engineering queue.",
+                            null,
+                            Ticket::STATUS_OPEN
+                        );
+                    }
+                }
 
                 return $ticket;
-            });
+            }, 3);
 
-            $superadmins = User::query()
-                ->where('role', User::ROLE_SUPERADMIN)
-                ->where('is_active', true)
-                ->get();
+            if ($isEngineeringRequest && ! $isAutoApproved) {
+                $directors = User::query()
+                    ->where('is_active', true)
+                    ->where('is_director', true)
+                    ->whereIn('role', [User::ROLE_SUPERADMIN, User::ROLE_USER])
+                    ->whereKeyNot($user->id)
+                    ->get();
 
-            $notificationService->notifyUsers(
-                $superadmins,
-                $ticket,
-                "New Ticket: {$ticket->ticket_number}",
-                "{$user->name} submitted \"{$ticket->title}\".",
-                route('tickets.show', $ticket, false),
-                $user->id
-            );
+                $recipients = $directors->isNotEmpty()
+                    ? $directors
+                    : User::query()
+                        ->where('role', User::ROLE_SUPERADMIN)
+                        ->where('is_active', true)
+                        ->whereKeyNot($user->id)
+                        ->get();
+
+                $notificationService->notifyUsers(
+                    $recipients,
+                    $ticket,
+                    "Approval Required: {$ticket->ticket_number}",
+                    "{$user->name} submitted engineering request \"{$ticket->title}\" awaiting director approval.",
+                    route('tickets.show', $ticket, false),
+                    $user->id
+                );
+            } elseif ($isAutoApproved) {
+                $superadmins = User::query()
+                    ->where('role', User::ROLE_SUPERADMIN)
+                    ->where('is_active', true)
+                    ->get();
+
+                $notificationService->notifyUsers(
+                    $superadmins,
+                    $ticket,
+                    "New Approved Request: {$ticket->ticket_number}",
+                    "{$user->name} submitted and auto-approved \"{$ticket->title}\".",
+                    route('tickets.show', $ticket, false),
+                    $user->id
+                );
+            } else {
+                $superadmins = User::query()
+                    ->where('role', User::ROLE_SUPERADMIN)
+                    ->where('is_active', true)
+                    ->get();
+
+                $notificationService->notifyUsers(
+                    $superadmins,
+                    $ticket,
+                    "New Ticket: {$ticket->ticket_number}",
+                    "{$user->name} submitted \"{$ticket->title}\".",
+                    route('tickets.show', $ticket, false),
+                    $user->id
+                );
+            }
 
             $redirectRoute = Ticket::visibleTo($user)->whereKey($ticket->id)->exists()
                 ? route('tickets.show', $ticket)
                 : route('tickets.index');
 
+            $flashMessage = $isAutoApproved
+                ? "Ticket {$ticket->ticket_number} created and auto-approved for the engineering queue."
+                : ($isEngineeringRequest
+                    ? "Ticket {$ticket->ticket_number} submitted and is pending director approval."
+                    : "Ticket {$ticket->ticket_number} created successfully.");
+
             return redirect()
                 ->to($redirectRoute)
-                ->with('success', "Ticket {$ticket->ticket_number} created successfully.");
+                ->with('success', $flashMessage);
         } catch (\Throwable $e) {
             report($e);
 
@@ -281,7 +391,7 @@ class TicketController extends Controller
     {
         $user = $request->user();
 
-        if (!Ticket::visibleTo($user)->whereKey($ticket->id)->exists()) {
+        if (! Ticket::visibleTo($user)->whereKey($ticket->id)->exists()) {
             abort(403, 'You do not have permission to view this ticket.');
         }
 
@@ -323,6 +433,15 @@ class TicketController extends Controller
     ): RedirectResponse {
         $user = $request->user();
         abort_unless($user->isSuperAdmin(), 403);
+
+        if ($ticket->isPendingApproval()) {
+            $message = 'This engineering request must be approved by a director before engineers can be assigned.';
+            $request->session()->flash('error', $message);
+
+            throw ValidationException::withMessages([
+                'lead_engineer_id' => $message,
+            ]);
+        }
 
         $oldLeadId = $ticket->lead_engineer_id ? (int) $ticket->lead_engineer_id : null;
         $oldCollaboratorIds = $ticket->collaborators()
@@ -413,7 +532,7 @@ class TicketController extends Controller
         }
 
         $addedCollaboratorIds = array_diff($collaboratorIds, $oldCollaboratorIds);
-        if (!empty($addedCollaboratorIds)) {
+        if (! empty($addedCollaboratorIds)) {
             $addedCollaborators = User::whereIn('id', $addedCollaboratorIds)->get();
             $notificationService->notifyUsers(
                 $addedCollaborators,
@@ -442,27 +561,168 @@ class TicketController extends Controller
         return back()->with('success', 'Ticket assignment updated.');
     }
 
+    public function decideApproval(
+        Request $request,
+        Ticket $ticket,
+        TicketService $ticketService,
+        NotificationService $notificationService
+    ): RedirectResponse {
+        $user = $request->user();
+        abort_unless(
+            $user->canApproveEngineeringRequests(),
+            403,
+            'You do not have permission to approve or reject engineering requests.'
+        );
+
+        $validated = $request->validate([
+            'decision' => ['required', 'in:approve,reject'],
+            'decision_notes' => ['nullable', 'string', 'max:10000'],
+        ]);
+
+        $decision = $validated['decision'];
+        $notes = trim((string) ($validated['decision_notes'] ?? ''));
+
+        if ($decision === 'reject' && $notes === '') {
+            $message = 'Please provide a reason for rejecting this engineering request.';
+            $request->session()->flash('error', $message);
+
+            throw ValidationException::withMessages([
+                'decision_notes' => $message,
+            ]);
+        }
+
+        $decidedTicket = DB::transaction(function () use ($ticket, $user, $decision, $notes, $ticketService, $request): Ticket {
+            $lockedTicket = Ticket::query()->whereKey($ticket->id)->lockForUpdate()->firstOrFail();
+
+            if (! $lockedTicket->isEngineeringRequest()) {
+                $message = 'Only engineering requests require director approval.';
+                $request->session()->flash('error', $message);
+
+                throw ValidationException::withMessages([
+                    'decision' => $message,
+                ]);
+            }
+
+            if (! $lockedTicket->isPendingApproval()) {
+                $message = 'This engineering request is no longer pending approval.';
+                $request->session()->flash('error', $message);
+
+                throw ValidationException::withMessages([
+                    'decision' => $message,
+                ]);
+            }
+
+            if ($decision === 'approve') {
+                $lockedTicket->status = Ticket::STATUS_OPEN;
+                $lockedTicket->approval_status = Ticket::APPROVAL_STATUS_APPROVED;
+                $lockedTicket->approval_decided_by_id = $user->id;
+                $lockedTicket->approval_decided_at = now();
+                if ($notes !== '') {
+                    $lockedTicket->review_decision_notes = $notes;
+                }
+                $lockedTicket->save();
+
+                $actorLabel = $user->isDirector() ? "Director {$user->name}" : "Superadmin {$user->name} (override)";
+                $ticketService->recordActivity(
+                    $lockedTicket,
+                    $user,
+                    'request_approved',
+                    "Engineering request approved by {$actorLabel} and released to the engineering queue.",
+                    Ticket::STATUS_PENDING_APPROVAL,
+                    Ticket::STATUS_OPEN
+                );
+            } else {
+                $lockedTicket->status = Ticket::STATUS_REJECTED;
+                $lockedTicket->approval_status = Ticket::APPROVAL_STATUS_REJECTED;
+                $lockedTicket->approval_decided_by_id = $user->id;
+                $lockedTicket->approval_decided_at = now();
+                $lockedTicket->review_decision_notes = $notes;
+                $lockedTicket->save();
+
+                $actorLabel = $user->isDirector() ? "Director {$user->name}" : "Superadmin {$user->name}";
+                $ticketService->recordActivity(
+                    $lockedTicket,
+                    $user,
+                    'request_rejected',
+                    "Engineering request rejected by {$actorLabel}.",
+                    Ticket::STATUS_PENDING_APPROVAL,
+                    Ticket::STATUS_REJECTED
+                );
+            }
+
+            return $lockedTicket;
+        });
+
+        $decidedTicket->loadMissing('requester');
+        $actionUrl = route('tickets.show', $decidedTicket, false);
+
+        if ($decision === 'approve') {
+            $superadmins = User::query()
+                ->where('role', User::ROLE_SUPERADMIN)
+                ->where('is_active', true)
+                ->whereKeyNot($decidedTicket->requester_id)
+                ->get();
+
+            $notificationService->notifyUsers(
+                $superadmins,
+                $decidedTicket,
+                "Approved Request Ready for Triage: {$decidedTicket->ticket_number}",
+                "{$user->name} approved \"{$decidedTicket->title}\". It is now in the engineering queue for assignment.",
+                $actionUrl,
+                $user->id
+            );
+
+            if ($decidedTicket->requester) {
+                $notificationService->notifyUsers(
+                    [$decidedTicket->requester],
+                    $decidedTicket,
+                    "Request Approved: {$decidedTicket->ticket_number}",
+                    "{$user->name} approved your engineering request \"{$decidedTicket->title}\".",
+                    $actionUrl,
+                    $user->id
+                );
+            }
+
+            return back()->with('success', "Engineering request {$decidedTicket->ticket_number} approved and moved to the engineering queue.");
+        }
+
+        if ($decidedTicket->requester) {
+            $notificationService->notifyUsers(
+                [$decidedTicket->requester],
+                $decidedTicket,
+                "Request Rejected: {$decidedTicket->ticket_number}",
+                "{$user->name} rejected your engineering request \"{$decidedTicket->title}\".",
+                $actionUrl,
+                $user->id
+            );
+        }
+
+        return back()->with('success', "Engineering request {$decidedTicket->ticket_number} rejected.");
+    }
+
     public function downloadAttachment(Request $request, TicketAttachment $attachment): StreamedResponse
     {
         $user = $request->user();
 
-        if (!Ticket::visibleTo($user)->whereKey($attachment->ticket_id)->exists()) {
+        if (! Ticket::visibleTo($user)->whereKey($attachment->ticket_id)->exists()) {
             abort(403, 'You do not have permission to download this attachment.');
         }
 
-        if ($attachment->is_internal && !$user->isStaff()) {
+        if ($attachment->is_internal && ! $user->isStaff()) {
             abort(403, 'You do not have permission to download internal attachments.');
         }
 
-        if (!Storage::disk('public')->exists($attachment->file_path)) {
+        $disk = (string) config('filesystems.attachments_disk');
+
+        if (! Storage::disk($disk)->exists($attachment->file_path)) {
             abort(404, 'Attachment file not found.');
         }
 
-        return Storage::disk('public')->download($attachment->file_path, $attachment->original_name);
+        return Storage::disk($disk)->download($attachment->file_path, $attachment->original_name);
     }
 
     /**
-     * @param Builder<Ticket> $query
+     * @param  Builder<Ticket>  $query
      */
     private function applyFilters(Builder $query, Request $request, User $user, bool $includeStatus): void
     {
@@ -513,10 +773,10 @@ class TicketController extends Controller
 
         $scope = $this->scalarInput($request, 'scope');
         match ($scope) {
-            'unassigned' => !$user->isEngineer() ? $query->whereNull('lead_engineer_id') : null,
+            'unassigned' => ! $user->isEngineer() ? $query->whereNull('lead_engineer_id') : null,
             'led_by_me' => $query->where('lead_engineer_id', $user->id),
             'collaborating' => $query->whereHas('collaborators', fn (Builder $c) => $c->where('users.id', $user->id)),
-            'my_submitted' => !$user->isEngineer() ? $query->where('requester_id', $user->id) : null,
+            'my_submitted' => ! $user->isEngineer() ? $query->where('requester_id', $user->id) : null,
             'overdue' => $query->whereIn('status', self::ACTIVE_STATUSES)
                 ->whereNotNull('target_due_date')
                 ->whereDate('target_due_date', '<', today()),
@@ -532,7 +792,7 @@ class TicketController extends Controller
     }
 
     /**
-     * @param list<string> $keys
+     * @param  list<string>  $keys
      * @return array<string, string|null>
      */
     private function extractFilters(Request $request, array $keys): array
@@ -558,12 +818,29 @@ class TicketController extends Controller
         NotificationService $notificationService
     ): RedirectResponse {
         $validated = $request->validate([
-            'status' => ['sometimes', 'required', Rule::in(self::ALL_STATUSES)],
+            'status' => ['sometimes', 'required', Rule::in(self::STAFF_WORKFLOW_STATUSES)],
             'priority' => ['sometimes', 'required', 'in:low,medium,high,critical'],
             'target_due_date' => ['sometimes', 'nullable', 'date'],
             'review_decision_notes' => ['sometimes', 'nullable', 'string', 'max:10000'],
             'resolution_summary' => ['sometimes', 'nullable', 'string', 'max:10000'],
         ]);
+
+        if ($ticket->isPendingApproval()) {
+            $isCancelling = ($validated['status'] ?? null) === Ticket::STATUS_CANCELLED
+                && ! array_key_exists('priority', $validated)
+                && ! array_key_exists('target_due_date', $validated)
+                && ! array_key_exists('review_decision_notes', $validated)
+                && ! array_key_exists('resolution_summary', $validated);
+
+            if (! $isCancelling) {
+                $message = 'Engineering requests awaiting approval must be approved or rejected through the director approval action first.';
+                $request->session()->flash('error', $message);
+
+                throw ValidationException::withMessages([
+                    'status' => $message,
+                ]);
+            }
+        }
 
         $changes = [];
 
@@ -616,7 +893,7 @@ class TicketController extends Controller
                 $ticket->target_due_date = $newDate;
                 $changes[] = [
                     'type' => 'due_date_updated',
-                    'description' => 'Target due date updated' . ($newDate ? " to {$newDate}." : ' (cleared).'),
+                    'description' => 'Target due date updated'.($newDate ? " to {$newDate}." : ' (cleared).'),
                     'old' => $oldDate,
                     'new' => $newDate,
                 ];
@@ -663,7 +940,7 @@ class TicketController extends Controller
             );
         }
 
-        if (!empty($changes)) {
+        if (! empty($changes)) {
             $ticket->loadMissing(['requester', 'leadEngineer', 'collaborators']);
             $recipients = collect([$ticket->requester, $ticket->leadEngineer])
                 ->merge($ticket->collaborators);
@@ -698,7 +975,7 @@ class TicketController extends Controller
         $actionUrl = route('tickets.show', $ticket, false);
 
         if ($validated['action'] === 'confirm_close') {
-            if (!in_array($ticket->status, [Ticket::STATUS_RESOLVED, Ticket::STATUS_WAITING_ON_USER], true)) {
+            if (! in_array($ticket->status, [Ticket::STATUS_RESOLVED, Ticket::STATUS_WAITING_ON_USER], true)) {
                 $message = 'This ticket cannot be confirmed closed in its current status.';
                 $request->session()->flash('error', $message);
 
@@ -734,7 +1011,7 @@ class TicketController extends Controller
         }
 
         if ($validated['action'] === 'reopen') {
-            if (!in_array($ticket->status, [Ticket::STATUS_RESOLVED, Ticket::STATUS_CLOSED], true)) {
+            if (! in_array($ticket->status, [Ticket::STATUS_RESOLVED, Ticket::STATUS_CLOSED], true)) {
                 $message = 'Only resolved or closed tickets can be reopened.';
                 $request->session()->flash('error', $message);
 
@@ -749,7 +1026,7 @@ class TicketController extends Controller
             $ticket->closed_at = null;
             $ticket->save();
 
-            if (!empty($validated['reopen_reason'])) {
+            if (! empty($validated['reopen_reason'])) {
                 TicketComment::create([
                     'ticket_id' => $ticket->id,
                     'user_id' => $user->id,
@@ -780,8 +1057,10 @@ class TicketController extends Controller
         }
 
         // action === 'cancel'
-        if ($ticket->status !== Ticket::STATUS_OPEN) {
-            $message = 'Only open tickets can be cancelled.';
+        if (! in_array($ticket->status, [Ticket::STATUS_OPEN, Ticket::STATUS_PENDING_APPROVAL], true)) {
+            $message = $ticket->isEngineeringRequest()
+                ? 'Only open or pending approval requests can be cancelled.'
+                : 'Only open tickets can be cancelled.';
             $request->session()->flash('error', $message);
 
             throw ValidationException::withMessages([
@@ -789,6 +1068,7 @@ class TicketController extends Controller
             ]);
         }
 
+        $oldStatus = $ticket->status;
         $ticket->status = Ticket::STATUS_CANCELLED;
         $ticket->save();
 
@@ -797,7 +1077,7 @@ class TicketController extends Controller
             $user,
             'status_changed',
             "{$user->name} cancelled the ticket.",
-            Ticket::STATUS_OPEN,
+            $oldStatus,
             Ticket::STATUS_CANCELLED
         );
 
@@ -819,25 +1099,26 @@ class TicketController extends Controller
             'internalSystem',
             'requester',
             'leadEngineer',
+            'approvalDecidedBy:id,name,role,is_director,job_title',
             'collaborators',
             'subtasks' => fn ($query) => $query->orderBy('id')->with('assignedEngineer'),
             'activities' => fn ($query) => $query->orderByDesc('created_at')->orderByDesc('id')->with('user'),
             'comments' => function ($query) use ($isStaff): void {
-                if (!$isStaff) {
+                if (! $isStaff) {
                     $query->where('is_internal', false);
                 }
 
                 $query->orderBy('created_at')->orderBy('id')->with([
                     'user',
                     'attachments' => function ($attachmentQuery) use ($isStaff): void {
-                        if (!$isStaff) {
+                        if (! $isStaff) {
                             $attachmentQuery->where('is_internal', false);
                         }
                     },
                 ]);
             },
             'attachments' => function ($query) use ($isStaff): void {
-                if (!$isStaff) {
+                if (! $isStaff) {
                     $query->where('is_internal', false);
                 }
 
@@ -857,6 +1138,7 @@ class TicketController extends Controller
      *     can_assign: bool,
      *     can_post_internal_note: bool,
      *     can_manage_subtasks: bool,
+     *     can_approve_request: bool,
      *     can_close_or_reopen: bool,
      *     can_cancel: bool
      * }
@@ -864,12 +1146,16 @@ class TicketController extends Controller
     private function buildTicketPermissions(Ticket $ticket, User $user): array
     {
         $canWorkOnTicket = $this->canStaffWorkOnTicket($ticket, $user);
+        $isPendingApproval = $ticket->isPendingApproval();
 
         return [
-            'can_manage_workflow' => $canWorkOnTicket,
-            'can_assign' => $user->isSuperAdmin(),
+            'can_manage_workflow' => $canWorkOnTicket && ! $isPendingApproval,
+            'can_assign' => $user->isSuperAdmin() && ! $isPendingApproval,
             'can_post_internal_note' => $canWorkOnTicket,
-            'can_manage_subtasks' => $canWorkOnTicket,
+            'can_manage_subtasks' => $canWorkOnTicket && ! $isPendingApproval,
+            'can_approve_request' => $ticket->isEngineeringRequest()
+                && $isPendingApproval
+                && $user->canApproveEngineeringRequests(),
             'can_close_or_reopen' => $canWorkOnTicket || (
                 $ticket->requester_id === $user->id
                 && in_array($ticket->status, [
@@ -880,13 +1166,13 @@ class TicketController extends Controller
             ),
             'can_cancel' => $canWorkOnTicket || (
                 $ticket->requester_id === $user->id
-                && $ticket->status === Ticket::STATUS_OPEN
+                && in_array($ticket->status, [Ticket::STATUS_OPEN, Ticket::STATUS_PENDING_APPROVAL], true)
             ),
         ];
     }
 
     /**
-     * @return \Illuminate\Database\Eloquent\Collection<int, User>
+     * @return Collection<int, User>
      */
     private function activeStaffList()
     {

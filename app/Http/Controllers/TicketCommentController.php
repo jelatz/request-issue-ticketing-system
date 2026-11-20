@@ -22,7 +22,7 @@ class TicketCommentController extends Controller
     ): RedirectResponse {
         $user = $request->user();
 
-        if (!Ticket::visibleTo($user)->whereKey($ticket->id)->exists()) {
+        if (! Ticket::visibleTo($user)->whereKey($ticket->id)->exists()) {
             abort(403, 'You do not have permission to comment on this ticket.');
         }
 
@@ -45,7 +45,7 @@ class TicketCommentController extends Controller
                 ]);
 
                 foreach ($request->file('attachments', []) as $file) {
-                    $storedPath = $file->store("tickets/{$ticket->id}/comments/{$comment->id}", 'public');
+                    $storedPath = $file->store("tickets/{$ticket->id}/comments/{$comment->id}", (string) config('filesystems.attachments_disk'));
 
                     TicketAttachment::create([
                         'ticket_id' => $ticket->id,

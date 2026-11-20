@@ -15,6 +15,7 @@ const props = defineProps({
 const emit = defineEmits(['close']);
 
 const page = usePage();
+const user = computed(() => page.props.auth?.user || null);
 const { notifyError } = useFeedback();
 const { closeNewTicketModal } = useNewTicketModal();
 const internalSystems = computed(() => page.props.internalSystems || []);
@@ -677,7 +678,13 @@ onUnmounted(() => {
                             v-else
                             class="text-xs text-slate-500 hidden sm:inline"
                         >
-                            Submissions enter the engineering triage queue.
+                            {{
+                                form.type === 'engineering_request'
+                                    ? user?.is_director
+                                        ? 'As a director, this engineering request will be auto-approved for the engineering queue.'
+                                        : 'Engineering requests require director approval before entering the engineering triage queue.'
+                                    : 'Submissions enter the engineering triage queue.'
+                            }}
                         </span>
                         <div class="flex items-center gap-2.5 ml-auto">
                             <button

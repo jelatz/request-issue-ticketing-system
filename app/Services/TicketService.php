@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\Ticket;
 use App\Models\TicketActivity;
+use App\Models\TicketSequence;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 class TicketService
@@ -15,26 +17,71 @@ class TicketService
     public function generateTicketNumber(string $type): string
     {
         $prefix = $type === Ticket::TYPE_ISSUE ? 'ISS' : 'REQ';
-        $year = now()->format('Y');
-        $basePrefix = "{$prefix}-{$year}-";
+        $year = (int) now()->format('Y');
+
+        return DB::transaction(function () use ($prefix, $year): string {
+            $sequence = TicketSequence::query()
+                ->where('prefix', $prefix)
+                ->where('year', $year)
+                ->lockForUpdate()
+                ->first();
+
+            if ($sequence === null) {
+                $initialMax = $this->findMaxTicketSequence($prefix, $year);
+
+                TicketSequence::query()->insertOrIgnore([
+                    'prefix' => $prefix,
+                    'year' => $year,
+                    'last_number' => $initialMax,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $sequence = TicketSequence::query()
+                    ->where('prefix', $prefix)
+                    ->where('year', $year)
+                    ->lockForUpdate()
+                    ->firstOrFail();
+            }
+
+            TicketSequence::query()
+                ->whereKey($sequence->id)
+                ->increment('last_number');
+
+            $nextNumber = (int) TicketSequence::query()
+                ->whereKey($sequence->id)
+                ->value('last_number');
+
+            return sprintf('%s-%04d-%04d', $prefix, $year, $nextNumber);
+        }, 3);
+    }
+
+    /**
+     * Find the highest existing numeric ticket suffix for a prefix and year.
+     */
+    private function findMaxTicketSequence(string $prefix, int $year): int
+    {
+        $basePrefix = sprintf('%s-%04d-', $prefix, $year);
 
         $existingNumbers = Ticket::query()
-            ->where('ticket_number', 'like', $basePrefix . '%')
+            ->where('ticket_number', 'like', "{$basePrefix}%")
             ->pluck('ticket_number');
 
         $maxSequence = 0;
 
         foreach ($existingNumbers as $number) {
             $suffix = substr($number, strlen($basePrefix));
+
             if (ctype_digit($suffix)) {
                 $seq = (int) $suffix;
+
                 if ($seq > $maxSequence) {
                     $maxSequence = $seq;
                 }
             }
         }
 
-        return sprintf('%s%04d', $basePrefix, $maxSequence + 1);
+        return $maxSequence;
     }
 
     /**

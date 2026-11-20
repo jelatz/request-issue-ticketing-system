@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\PushSubscriptionController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\TicketCommentController;
 use App\Http\Controllers\TicketController;
@@ -41,6 +42,8 @@ Route::middleware(['auth', 'active'])->group(function (): void {
     Route::patch('/tickets/{ticket}/assignment', [TicketController::class, 'updateAssignment'])
         ->middleware('role:superadmin')
         ->name('tickets.assignment.update');
+    Route::patch('/tickets/{ticket}/approval', [TicketController::class, 'decideApproval'])
+        ->name('tickets.approval.decide');
 
     Route::post('/tickets/{ticket}/comments', [TicketCommentController::class, 'store'])
         ->name('tickets.comments.store');
@@ -62,6 +65,17 @@ Route::middleware(['auth', 'active'])->group(function (): void {
         ->name('notifications.read');
     Route::post('/notifications/read-all', [NotificationController::class, 'markAllRead'])
         ->name('notifications.readAll');
+
+    Route::middleware('preserve.flash')->group(function (): void {
+        Route::get('/notifications/summary', [NotificationController::class, 'summary'])->name('notifications.summary');
+        Route::post('/push-subscriptions', [PushSubscriptionController::class, 'store'])
+            ->name('push-subscriptions.store');
+        Route::delete('/push-subscriptions', [PushSubscriptionController::class, 'destroy'])
+            ->name('push-subscriptions.destroy');
+        Route::post('/push-subscriptions/test', [PushSubscriptionController::class, 'sendTest'])
+            ->middleware('throttle:6,1')
+            ->name('push-subscriptions.test');
+    });
 
     Route::middleware('role:superadmin,engineer')->group(function (): void {
         Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');

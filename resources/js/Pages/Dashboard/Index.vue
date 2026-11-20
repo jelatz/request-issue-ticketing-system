@@ -36,9 +36,12 @@ const resolvedClosedCount = computed(
 );
 
 const headerContext = computed(() => {
-    const base = user.value?.is_staff
-        ? 'Operations & engineering queue'
-        : 'Your submitted requests & issues';
+    let base = 'Your submitted requests & issues';
+    if (user.value?.is_staff) {
+        base = 'Operations & engineering queue';
+    } else if (user.value?.is_director) {
+        base = 'Director approval queue & submitted requests';
+    }
 
     return user.value?.department ? `${base} · ${user.value.department}` : base;
 });
@@ -82,6 +85,27 @@ function visitTicket(ticketId) {
                 </div>
             </div>
 
+            <!-- Director Approval Callout Banner -->
+            <div
+                v-if="user?.can_approve_requests && metrics.pending_approval_count > 0"
+                class="bg-indigo-50/70 border border-indigo-200 rounded-lg px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5"
+            >
+                <div class="flex items-center gap-2 text-xs text-indigo-950">
+                    <span class="w-2 h-2 rounded-full bg-indigo-500 shrink-0" />
+                    <span>
+                        <span class="font-semibold tabular-nums">{{ metrics.pending_approval_count }}</span>
+                        {{ metrics.pending_approval_count === 1 ? 'engineering request is' : 'engineering requests are' }}
+                        awaiting director approval before entering the engineering queue.
+                    </span>
+                </div>
+                <Link
+                    href="/tickets?status=pending_approval"
+                    class="self-start sm:self-auto px-3 py-1 text-xs font-medium text-indigo-700 bg-white hover:bg-indigo-50 border border-indigo-200 rounded-md transition-colors shrink-0"
+                >
+                    Review approvals
+                </Link>
+            </div>
+
             <!-- Unified Horizontal 5-Cell Summary Bar -->
             <div class="bg-white border border-slate-200 rounded-lg grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 divide-y sm:divide-y-0 sm:divide-x divide-slate-200 overflow-hidden">
                 <div class="px-4 py-3.5">
@@ -103,6 +127,12 @@ function visitTicket(ticketId) {
                                     : 'No critical / high active'
                             }}
                         </span>
+                    </div>
+                    <div
+                        v-if="metrics.pending_approval_count > 0"
+                        class="mt-0.5 text-[11px] text-indigo-700 tabular-nums"
+                    >
+                        {{ metrics.pending_approval_count }} pending director approval
                     </div>
                 </div>
 

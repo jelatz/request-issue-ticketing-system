@@ -5,6 +5,7 @@ import NewTicketModal from '../Components/NewTicketModal.vue';
 import RoleBadge from '../Components/RoleBadge.vue';
 import { useFeedback } from '../composables/useFeedback';
 import { useNewTicketModal } from '../composables/useNewTicketModal';
+import { useWebPush } from '../composables/useWebPush';
 import { formatDateTime } from '../utils/formatters';
 
 defineProps({
@@ -17,10 +18,31 @@ defineProps({
 const page = usePage();
 const { isNewTicketModalOpen, closeNewTicketModal } = useNewTicketModal();
 const { toasts, notifySuccess, notifyError, dismissToast, markFlashProcessed } = useFeedback();
+const {
+    isSupported,
+    permission,
+    isSubscribed,
+    isBusy: webPushBusy,
+    liveUnreadCount,
+    liveRecentNotifications,
+    syncFromPageProps,
+    init: initWebPush,
+    startLiveSync,
+    stopLiveSync,
+    enableNotifications,
+    disableNotifications,
+    unsubscribeBeforeLogout,
+} = useWebPush();
 
 const user = computed(() => page.props.auth?.user || null);
-const unreadCount = computed(() => page.props.auth?.unread_notifications_count || 0);
-const recentNotifications = computed(() => page.props.auth?.recent_notifications || []);
+const pendingApprovalsCount = computed(() => page.props.auth?.pending_approvals_count ?? 0);
+const vapidPublicKey = computed(() => page.props.webpush?.vapid_public_key || null);
+const unreadCount = computed(
+    () => liveUnreadCount.value ?? page.props.auth?.unread_notifications_count ?? 0
+);
+const recentNotifications = computed(
+    () => liveRecentNotifications.value ?? page.props.auth?.recent_notifications ?? []
+);
 const flashSuccess = computed(() => page.props.flash?.success || null);
 const flashError = computed(() => page.props.flash?.error || null);
 const pageErrors = computed(() => page.props.errors || {});
@@ -38,6 +60,41 @@ const searchQuery = ref(page.props.filters?.search || '');
 
 let removeHttpExceptionListener = null;
 let removeNetworkErrorListener = null;
+let isMounted = false;
+let liveSyncStarted = false;
+
+watch(
+    () => [
+        page.props.auth?.unread_notifications_count,
+        page.props.auth?.recent_notifications,
+    ],
+    ([unread, recent]) => {
+        syncFromPageProps(unread, recent);
+    },
+    { immediate: true }
+);
+
+function syncWebPushState() {
+    if (user.value) {
+        initWebPush(vapidPublicKey.value);
+        if (!liveSyncStarted) {
+            startLiveSync();
+            liveSyncStarted = true;
+        }
+    } else if (liveSyncStarted) {
+        stopLiveSync();
+        liveSyncStarted = false;
+    }
+}
+
+watch(
+    () => [user.value?.id, vapidPublicKey.value],
+    () => {
+        if (isMounted) {
+            syncWebPushState();
+        }
+    }
+);
 
 watch(
     () => [
@@ -78,6 +135,10 @@ const currentPath = computed(() => {
     return url.split('?')[0];
 });
 
+const isApprovalsView = computed(
+    () => currentPath.value === '/tickets' && page.props.filters?.status === 'pending_approval'
+);
+
 const navigationItems = computed(() => {
     const items = [
         {
@@ -91,11 +152,21 @@ const navigationItems = computed(() => {
             href: '/tickets',
             group: 'Workspace',
             isActive:
-                currentPath.value === '/tickets' ||
+                (currentPath.value === '/tickets' && !isApprovalsView.value) ||
                 (currentPath.value.startsWith('/tickets/') &&
                     currentPath.value !== '/tickets/kanban'),
         },
     ];
+
+    if (user.value?.can_approve_requests) {
+        items.push({
+            label: 'Approvals',
+            href: '/tickets?status=pending_approval',
+            group: 'Workspace',
+            isActive: isApprovalsView.value,
+            badge: pendingApprovalsCount.value,
+        });
+    }
 
     if (user.value?.is_staff) {
         items.push(
@@ -175,8 +246,25 @@ function handleNotificationClick(notification) {
     );
 }
 
-function handleLogout() {
+async function handleLogout() {
+    await unsubscribeBeforeLogout();
+    if (liveSyncStarted) {
+        stopLiveSync();
+        liveSyncStarted = false;
+    }
     router.post('/logout');
+}
+
+async function handleToggleDesktopAlerts() {
+    const result = isSubscribed.value
+        ? await disableNotifications()
+        : await enableNotifications(vapidPublicKey.value);
+
+    if (result.ok) {
+        notifySuccess(result.message);
+    } else {
+        notifyError(result.message);
+    }
 }
 
 function handleOutsideClick(event) {
@@ -222,8 +310,13 @@ function handleGlobalKeydown(event) {
 }
 
 onMounted(() => {
+    isMounted = true;
     document.addEventListener('click', handleOutsideClick);
     window.addEventListener('keydown', handleGlobalKeydown);
+
+    if (user.value) {
+        syncWebPushState();
+    }
 
     removeHttpExceptionListener = router.on('httpException', (event) => {
         event.preventDefault();
@@ -248,10 +341,15 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+    isMounted = false;
     document.removeEventListener('click', handleOutsideClick);
     window.removeEventListener('keydown', handleGlobalKeydown);
     removeHttpExceptionListener?.();
     removeNetworkErrorListener?.();
+    if (liveSyncStarted) {
+        stopLiveSync();
+        liveSyncStarted = false;
+    }
 });
 </script>
 
@@ -280,14 +378,20 @@ onUnmounted(() => {
                         v-for="item in group.items"
                         :key="item.href"
                         :href="item.href"
-                        class="block px-2.5 py-1.5 rounded-md text-[13px] transition-colors"
+                        class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-[13px] transition-colors"
                         :class="
                             item.isActive
                                 ? 'bg-blue-50/80 text-blue-700 font-medium'
                                 : 'text-slate-600 hover:bg-slate-200/50 hover:text-slate-900'
                         "
                     >
-                        {{ item.label }}
+                        <span>{{ item.label }}</span>
+                        <span
+                            v-if="item.badge > 0"
+                            class="px-1.5 py-0.5 text-[10px] font-semibold font-mono rounded-full bg-indigo-100 text-indigo-700 tabular-nums"
+                        >
+                            {{ item.badge > 99 ? '99+' : item.badge }}
+                        </span>
                     </Link>
                 </div>
             </nav>
@@ -299,7 +403,15 @@ onUnmounted(() => {
                     </span>
                 </div>
                 <div class="flex items-center justify-between gap-2">
-                    <RoleBadge :role="user.role" />
+                    <div class="flex items-center gap-1.5 min-w-0">
+                        <RoleBadge :role="user.role" />
+                        <span
+                            v-if="user.is_director"
+                            class="text-[11px] px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50/80 text-indigo-700 font-medium"
+                        >
+                            Director
+                        </span>
+                    </div>
                     <span v-if="user.department" class="truncate text-slate-400">
                         {{ user.department }}
                     </span>
@@ -341,7 +453,7 @@ onUnmounted(() => {
                             v-for="item in group.items"
                             :key="item.href"
                             :href="item.href"
-                            class="block px-2.5 py-1.5 rounded-md text-[13px] transition-colors"
+                            class="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-[13px] transition-colors"
                             :class="
                                 item.isActive
                                     ? 'bg-blue-50/80 text-blue-700 font-medium'
@@ -349,7 +461,13 @@ onUnmounted(() => {
                             "
                             @click="mobileMenuOpen = false"
                         >
-                            {{ item.label }}
+                            <span>{{ item.label }}</span>
+                            <span
+                                v-if="item.badge > 0"
+                                class="px-1.5 py-0.5 text-[10px] font-semibold font-mono rounded-full bg-indigo-100 text-indigo-700 tabular-nums"
+                            >
+                                {{ item.badge > 99 ? '99+' : item.badge }}
+                            </span>
                         </Link>
                     </div>
                 </nav>
@@ -357,8 +475,14 @@ onUnmounted(() => {
                 <div v-if="user" class="border-t border-slate-200 px-4 py-3 space-y-2.5 shrink-0">
                     <div class="space-y-1">
                         <div class="text-xs font-medium text-slate-900 truncate">{{ user.name }}</div>
-                        <div class="flex items-center gap-2">
+                        <div class="flex items-center gap-2 flex-wrap">
                             <RoleBadge :role="user.role" />
+                            <span
+                                v-if="user.is_director"
+                                class="text-[11px] px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50/80 text-indigo-700 font-medium"
+                            >
+                                Director
+                            </span>
                             <span v-if="user.department" class="text-[11px] text-slate-400 truncate">
                                 {{ user.department }}
                             </span>
@@ -498,10 +622,36 @@ onUnmounted(() => {
                                 </button>
                             </div>
 
-                            <div class="px-4 py-2.5 border-t border-slate-200 bg-slate-50/70 text-center">
+                            <div class="px-4 py-2.5 border-t border-slate-200 bg-slate-50/70 flex items-center justify-between gap-2">
+                                <div v-if="isSupported && vapidPublicKey" class="min-w-0">
+                                    <span
+                                        v-if="permission === 'denied'"
+                                        class="text-[11px] text-slate-400"
+                                    >
+                                        Desktop alerts blocked in browser
+                                    </span>
+                                    <button
+                                        v-else-if="isSubscribed"
+                                        type="button"
+                                        :disabled="webPushBusy"
+                                        class="text-[11px] font-medium text-slate-600 hover:text-slate-900 disabled:opacity-50"
+                                        @click="handleToggleDesktopAlerts"
+                                    >
+                                        Disable desktop alerts
+                                    </button>
+                                    <button
+                                        v-else
+                                        type="button"
+                                        :disabled="webPushBusy"
+                                        class="text-[11px] font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50"
+                                        @click="handleToggleDesktopAlerts"
+                                    >
+                                        Enable desktop alerts
+                                    </button>
+                                </div>
                                 <Link
                                     href="/notifications"
-                                    class="text-xs font-medium text-blue-600 hover:text-blue-700"
+                                    class="text-xs font-medium text-blue-600 hover:text-blue-700 ml-auto"
                                     @click="notificationsOpen = false"
                                 >
                                     View all
@@ -517,6 +667,12 @@ onUnmounted(() => {
                             {{ user.name }}
                         </span>
                         <RoleBadge :role="user.role" />
+                        <span
+                            v-if="user.is_director"
+                            class="text-[11px] px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50/80 text-indigo-700 font-medium"
+                        >
+                            Director
+                        </span>
                     </div>
 
                     <button

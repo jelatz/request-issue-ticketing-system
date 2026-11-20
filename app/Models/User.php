@@ -8,14 +8,17 @@ use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use NotificationChannels\WebPush\HasPushSubscriptions;
 
 class User extends Authenticatable
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    use HasFactory, HasPushSubscriptions, Notifiable;
 
     public const ROLE_SUPERADMIN = 'superadmin';
+
     public const ROLE_ENGINEER = 'engineer';
+
     public const ROLE_USER = 'user';
 
     /**
@@ -27,6 +30,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
+        'is_director',
         'department',
         'job_title',
         'is_active',
@@ -48,6 +52,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'is_director' => 'boolean',
             'is_active' => 'boolean',
         ];
     }
@@ -70,6 +75,17 @@ class User extends Authenticatable
     public function isUser(): bool
     {
         return $this->role === self::ROLE_USER;
+    }
+
+    public function isDirector(): bool
+    {
+        return (bool) $this->is_director
+            && in_array($this->role, [self::ROLE_SUPERADMIN, self::ROLE_USER], true);
+    }
+
+    public function canApproveEngineeringRequests(): bool
+    {
+        return $this->isDirector() || $this->isSuperAdmin();
     }
 
     /**

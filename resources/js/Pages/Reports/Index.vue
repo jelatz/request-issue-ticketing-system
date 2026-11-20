@@ -103,6 +103,7 @@ function exportUrl(section) {
 }
 
 const statusBarColors = {
+    pending_approval: 'bg-indigo-500',
     open: 'bg-slate-400',
     under_review: 'bg-blue-500',
     in_progress: 'bg-blue-600',

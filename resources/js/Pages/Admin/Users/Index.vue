@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue';
 import { Head, router, useForm, usePage } from '@inertiajs/vue3';
 import AppLayout from '../../../Layouts/AppLayout.vue';
 import RoleBadge from '../../../Components/RoleBadge.vue';
@@ -49,10 +49,19 @@ const filterForm = reactive({
         props.filters.is_active !== undefined && props.filters.is_active !== null
             ? String(props.filters.is_active)
             : '',
+    is_director:
+        props.filters.is_director !== undefined && props.filters.is_director !== null
+            ? String(props.filters.is_director)
+            : '',
 });
 
 const hasActiveFilters = computed(() => {
-    return Boolean(filterForm.search || filterForm.role || filterForm.is_active !== '');
+    return Boolean(
+        filterForm.search ||
+            filterForm.role ||
+            filterForm.is_active !== '' ||
+            filterForm.is_director !== ''
+    );
 });
 
 let searchDebounceTimer = null;
@@ -72,6 +81,9 @@ function applyFilters() {
     }
     if (filterForm.is_active !== '') {
         params.is_active = filterForm.is_active;
+    }
+    if (filterForm.is_director !== '') {
+        params.is_director = filterForm.is_director;
     }
 
     router.get('/admin/users', params, {
@@ -99,6 +111,7 @@ function resetFilters() {
     filterForm.search = '';
     filterForm.role = '';
     filterForm.is_active = '';
+    filterForm.is_director = '';
 
     router.get('/admin/users', {}, {
         preserveState: true,
@@ -124,7 +137,18 @@ const createForm = useForm({
     department: '',
     job_title: '',
     is_active: true,
+    is_director: false,
 });
+
+watch(
+    () => createForm.role,
+    (role) => {
+        if (role === 'engineer') {
+            createForm.is_director = false;
+            createForm.clearErrors('is_director');
+        }
+    }
+);
 
 const createUnlockedFields = reactive({
     name: false,
@@ -217,7 +241,18 @@ const editForm = useForm({
     department: '',
     job_title: '',
     is_active: true,
+    is_director: false,
 });
+
+watch(
+    () => editForm.role,
+    (role) => {
+        if (role === 'engineer') {
+            editForm.is_director = false;
+            editForm.clearErrors('is_director');
+        }
+    }
+);
 
 function unlockEditPassword(event) {
     if (!editPasswordUnlocked.value) {
@@ -244,6 +279,7 @@ function openEditModal(userRow) {
     editForm.department = userRow.department || '';
     editForm.job_title = userRow.job_title || '';
     editForm.is_active = Boolean(userRow.is_active);
+    editForm.is_director = Boolean(userRow.is_director);
     showEditModal.value = true;
 }
 
@@ -322,6 +358,7 @@ function toggleUserStatus(userRow) {
             department: userRow.department || '',
             job_title: userRow.job_title || '',
             is_active: !userRow.is_active,
+            is_director: Boolean(userRow.is_director),
         },
         {
             preserveScroll: true,
@@ -403,6 +440,18 @@ function toggleUserStatus(userRow) {
                             <option value="0">Inactive</option>
                         </select>
 
+                        <select
+                            id="admin-users-director"
+                            v-model="filterForm.is_director"
+                            aria-label="Filter by director approval permission"
+                            class="px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-md text-slate-700 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                            @change="applyFilters"
+                        >
+                            <option value="">All accounts</option>
+                            <option value="1">Directors only</option>
+                            <option value="0">Non-directors</option>
+                        </select>
+
                         <button
                             v-if="hasActiveFilters"
                             type="button"
@@ -461,7 +510,15 @@ function toggleUserStatus(userRow) {
                                 </td>
 
                                 <td class="px-4 py-3 align-top whitespace-nowrap">
-                                    <RoleBadge :role="userRow.role" :bordered="false" />
+                                    <div class="flex flex-wrap items-center gap-1.5">
+                                        <RoleBadge :role="userRow.role" :bordered="false" />
+                                        <span
+                                            v-if="userRow.is_director"
+                                            class="text-[11px] px-1.5 py-0.5 rounded border border-indigo-200 bg-indigo-50/80 text-indigo-700 font-medium"
+                                        >
+                                            Director
+                                        </span>
+                                    </div>
                                 </td>
 
                                 <td class="px-4 py-3 align-top">
@@ -736,19 +793,45 @@ function toggleUserStatus(userRow) {
                     </div>
                 </div>
 
-                <div class="pt-1">
-                    <label for="create-user-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                        <input
-                            id="create-user-active"
-                            v-model="createForm.is_active"
-                            type="checkbox"
-                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span>Account is active and permitted to sign in</span>
-                    </label>
-                    <p v-if="createForm.errors.is_active" class="mt-1 text-xs text-rose-600">
-                        {{ createForm.errors.is_active }}
-                    </p>
+                <div class="pt-1 space-y-2">
+                    <div>
+                        <label for="create-user-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input
+                                id="create-user-active"
+                                v-model="createForm.is_active"
+                                type="checkbox"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span>Account is active and permitted to sign in</span>
+                        </label>
+                        <p v-if="createForm.errors.is_active" class="mt-1 text-xs text-rose-600">
+                            {{ createForm.errors.is_active }}
+                        </p>
+                    </div>
+
+                    <div class="space-y-1">
+                        <label
+                            for="create-user-director"
+                            class="inline-flex items-center gap-2 text-xs text-slate-700"
+                            :class="createForm.role === 'engineer' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'"
+                        >
+                            <input
+                                id="create-user-director"
+                                v-model="createForm.is_director"
+                                type="checkbox"
+                                :disabled="createForm.role === 'engineer'"
+                                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                                @change="createForm.clearErrors('is_director')"
+                            />
+                            <span>Director approver (can approve or reject engineering requests)</span>
+                        </label>
+                        <p v-if="createForm.role === 'engineer'" class="text-[11px] text-slate-500">
+                            Engineer accounts cannot hold director approval permission.
+                        </p>
+                        <p v-if="createForm.errors.is_director" class="text-xs text-rose-600">
+                            {{ createForm.errors.is_director }}
+                        </p>
+                    </div>
                 </div>
 
                 <div class="pt-4 border-t border-slate-200 flex items-center justify-end gap-2">
@@ -960,23 +1043,49 @@ function toggleUserStatus(userRow) {
                     </div>
                 </div>
 
-                <div class="pt-1 space-y-1">
-                    <label for="edit-user-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
-                        <input
-                            id="edit-user-active"
-                            v-model="editForm.is_active"
-                            type="checkbox"
-                            :disabled="isEditingSelf"
-                            class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
-                        />
-                        <span>Account is active and permitted to sign in</span>
-                    </label>
-                    <p v-if="isEditingSelf" class="text-xs text-slate-500">
-                        You cannot change the role or deactivate your own Superadmin account.
-                    </p>
-                    <p v-if="editForm.errors.is_active" class="text-xs text-rose-600">
-                        {{ editForm.errors.is_active }}
-                    </p>
+                <div class="pt-1 space-y-2">
+                    <div class="space-y-1">
+                        <label for="edit-user-active" class="inline-flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                            <input
+                                id="edit-user-active"
+                                v-model="editForm.is_active"
+                                type="checkbox"
+                                :disabled="isEditingSelf"
+                                class="rounded border-slate-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                            />
+                            <span>Account is active and permitted to sign in</span>
+                        </label>
+                        <p v-if="isEditingSelf" class="text-xs text-slate-500">
+                            You cannot change the role or deactivate your own Superadmin account.
+                        </p>
+                        <p v-if="editForm.errors.is_active" class="text-xs text-rose-600">
+                            {{ editForm.errors.is_active }}
+                        </p>
+                    </div>
+
+                    <div class="space-y-1">
+                        <label
+                            for="edit-user-director"
+                            class="inline-flex items-center gap-2 text-xs text-slate-700"
+                            :class="editForm.role === 'engineer' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'"
+                        >
+                            <input
+                                id="edit-user-director"
+                                v-model="editForm.is_director"
+                                type="checkbox"
+                                :disabled="editForm.role === 'engineer'"
+                                class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 disabled:opacity-50"
+                                @change="editForm.clearErrors('is_director')"
+                            />
+                            <span>Director approver (can approve or reject engineering requests)</span>
+                        </label>
+                        <p v-if="editForm.role === 'engineer'" class="text-[11px] text-slate-500">
+                            Engineer accounts cannot hold director approval permission.
+                        </p>
+                        <p v-if="editForm.errors.is_director" class="text-xs text-rose-600">
+                            {{ editForm.errors.is_director }}
+                        </p>
+                    </div>
                 </div>
 
                 <div class="pt-4 border-t border-slate-200 flex items-center justify-end gap-2">

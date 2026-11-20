@@ -6,6 +6,7 @@ use App\Mail\TicketNotificationMail;
 use App\Models\Ticket;
 use App\Models\User;
 use App\Models\UserNotification;
+use App\Notifications\TicketWebPushNotification;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -30,9 +31,9 @@ class NotificationService
             'is_read' => false,
         ]);
 
-        if (!empty($recipient->email)) {
+        if (! empty($recipient->email)) {
             try {
-                Mail::to($recipient->email)->send(new TicketNotificationMail($notification, $ticket));
+                Mail::to($recipient->email)->queue(new TicketNotificationMail($notification, $ticket));
             } catch (\Throwable $exception) {
                 Log::warning('Failed to send ticket notification email.', [
                     'notification_id' => $notification->id,
@@ -42,13 +43,29 @@ class NotificationService
             }
         }
 
+        try {
+            if (
+                filled(config('webpush.vapid.public_key'))
+                && filled(config('webpush.vapid.private_key'))
+                && $recipient->pushSubscriptions()->exists()
+            ) {
+                $recipient->notify(new TicketWebPushNotification($notification, $ticket));
+            }
+        } catch (\Throwable $exception) {
+            Log::warning('Failed to queue ticket web push notification.', [
+                'notification_id' => $notification->id,
+                'recipient_id' => $recipient->id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+
         return $notification;
     }
 
     /**
      * Notify a deduplicated list of active recipients, optionally excluding one user.
      *
-     * @param iterable<int, User|null> $recipients
+     * @param  iterable<int, User|null>  $recipients
      */
     public function notifyUsers(
         iterable $recipients,
@@ -61,7 +78,7 @@ class NotificationService
         $seenUserIds = [];
 
         foreach ($recipients as $recipient) {
-            if (!$recipient instanceof User) {
+            if (! $recipient instanceof User) {
                 continue;
             }
 
@@ -69,7 +86,7 @@ class NotificationService
                 continue;
             }
 
-            if (!$recipient->is_active) {
+            if (! $recipient->is_active) {
                 continue;
             }
 
